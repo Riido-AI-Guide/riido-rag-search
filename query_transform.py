@@ -58,18 +58,3 @@ def transform_user_query(
             "search_queries": [raw_query],
             "needs_search": True
         }
-
-#### 테스트용 #####
-
-if __name__ == "__main__":
-    test_queries = [
-        "작업 어케만듦?",
-        "안녕하세요, 오늘 날씨 어때요?",
-        "뤼이도에서 지원하는 API 문서 어디서 볼 수 있나요?",
-        "감사합니다!",
-        "뤼이도에서 작업 생성하는 방법 알려주세요."
-    ]
-
-    for query in test_queries:
-        result = transform_user_query(query)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
