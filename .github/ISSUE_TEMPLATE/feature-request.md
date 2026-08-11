@@ -1,12 +1,3 @@
----
-name: feature request
-about: Suggest an idea for this project
-title: ''
-labels: ''
-assignees: '3405000'
-
----
-
 ## 📌 이슈 유형
 - [ ] 🐛 버그 수정 (Fix)
 - [ ] ✨ 신규 기능 (Feature)
