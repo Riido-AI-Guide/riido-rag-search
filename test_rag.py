@@ -1,4 +1,5 @@
 import json
+from evaluator import evaluate_faithfulness
 from llm import generate_rag_answer
 from rag_A import search
 from query_transform import transform_user_query
@@ -6,13 +7,12 @@ from query_transform import transform_user_query
 
 
 test_queries = [
-    "팀원을 어떻게 추가해?",
-    "워크스페이스의 멤버 목록을 확인하는 법 알려줘"
-    # "작업 어케만듦?",
-    # "안녕하세요, 오늘 날씨 어때요?",
-    # "뤼이도에서 지원하는 API 문서 어디서 볼 수 있나요?",
-    # "감사합니다!",
-    # "뤼이도에서 작업 생성하는 방법 알려주세요."
+    "팀원을 어떻게 추가해?"
+    # "팀을 삭제하면 어떻게 돼?",
+    # "스프린트 기간은 최대 몇 주까지 설정할 수 있어?",
+    # "학생이면 뤼이도 유료 요금제 무료로 쓸 수 있어?",
+    # "PR 연동 문제 해결하는 방법",
+    # "회원 탈퇴 어떻게 해?",
 ]
 
 for query in test_queries:
@@ -30,7 +30,17 @@ for query in test_queries:
         searched_docs = search(transformed_query["cleaned_query"])["documents"]
         print(f"[검색된 문서 수] {len(searched_docs)}")
         print(f"[검색된 문서] {json.dumps(searched_docs, ensure_ascii=False, indent=2)}")
+        for i, d in enumerate(searched_docs, 1):
+            print(f"  {i}. [{d['type']}] [{d['section']}])")
         
+        # 답변 생성
         answer = generate_rag_answer(transformed_query["cleaned_query"], searched_docs)
         print(f"[생성된 답변] {answer['answer']}")
-    
+        
+        # 답변 평가
+        eval_result = evaluate_faithfulness(
+            question=transformed_query["cleaned_query"],
+            context_documents=[doc["content"] for doc in searched_docs],
+            generated_answer=answer["answer"]
+        )
+        print(f"[평가 결과] {json.dumps(eval_result.__dict__, ensure_ascii=False, indent=2)}")

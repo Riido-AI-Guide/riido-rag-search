@@ -8,7 +8,7 @@ from prompt import build_rag_prompts
 def generate_rag_answer(
     question: str,
     documents: List[str],
-    model_name: str = "gpt-4o-mini",
+    model_name: str = "gpt-4o",
     temperature: float = 0.2,
 ) -> Dict[str, Any]:
     """
