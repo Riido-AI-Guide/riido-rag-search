@@ -286,7 +286,7 @@ def reciprocal_rank_fusion(vector_results, keyword_results, k: int = 30, vector_
     return sorted(chunk_map.values(), key=lambda x: x.rrf_score, reverse=True)
 
 
-def search(query: str, top_k: int = 3, vector_weight: float = 0.5) -> dict:
+def search(query: str, top_k: int = 3, vector_weight: float = 0.5):
     """계약: {"documents": [{"title","content","section","rrf_score","similarity","type"}]}"""
     v_results = vector_search(query, top_k=20)
     k_results = keyword_search(query, top_k=20)

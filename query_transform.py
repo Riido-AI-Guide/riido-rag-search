@@ -4,10 +4,12 @@ from typing import Dict, Any
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from dto import Query
+
 def transform_user_query(
     raw_query: str,
     model_name: str = "gpt-4o-mini",
-) -> Dict[str, Any]:
+) -> Query:
     """ 사용자 질문을 분석하여 검색 필요 여부, 정제된 쿼리, 변형 쿼리를 반환하는 함수 """
     
     load_dotenv()
@@ -43,18 +45,18 @@ def transform_user_query(
         )
 
         res_json = json.loads(response.choices[0].message.content)
-        return {
-            "raw_query": raw_query,
-            "cleaned_query": res_json.get("cleaned_query", raw_query),
-            "search_queries": res_json.get("search_queries", [raw_query]),
-            "needs_search": res_json.get("needs_search", True)
-        }
+        return Query(
+            raw_query= raw_query,
+            cleaned_query=res_json.get("cleaned_query", raw_query),
+            search_queries=res_json.get("search_queries", [raw_query]),
+            needs_search=res_json.get("needs_search", True)
+        )
 
     except Exception:
         # LLM 오류 발생 시
-        return {
-            "raw_query": raw_query,
-            "cleaned_query": raw_query,
-            "search_queries": [raw_query],
-            "needs_search": True
-        }
+        return Query(
+            raw_query=raw_query,
+            cleaned_query=raw_query,
+            search_queries=[raw_query],
+            needs_search=True
+        )

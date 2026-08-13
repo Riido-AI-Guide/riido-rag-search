@@ -1,17 +1,10 @@
 import os
 import json
-from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 from openai import OpenAI
 
-
-@dataclass
-class RAGEvalResult:
-    faithfulness: float      # 충실도 (0.0 ~ 1.0, 1.0일수록 환각 없음)
-    answer_relevance: float  # 답변 관련성 (0.0 ~ 1.0)
-    context_relevance: float  # 문서 관련성 (0.0 ~ 1.0)
-    reason: str                    # 평가 이유 및 감점 사유
+from dto import AnswerEvaluation
 
 
 def evaluate_faithfulness(
@@ -19,7 +12,7 @@ def evaluate_faithfulness(
     context_documents: List[str],
     generated_answer: str,
     model_name: str = "gpt-4o"
-) -> RAGEvalResult:
+) -> AnswerEvaluation:
     """
     LLM-as-a-Judge 기법을 사용하여 생성된 답변이 검색된 문서에만 근거하는지(환각 여부) 검증합니다.
     """
@@ -75,7 +68,7 @@ def evaluate_faithfulness(
 
         res_json = json.loads(response.choices[0].message.content)
         
-        return RAGEvalResult(
+        return AnswerEvaluation(
             faithfulness=float(res_json.get("faithfulness", 0.0)),
             answer_relevance=float(res_json.get("answer_relevance", 0.0)),
             context_relevance=float(res_json.get("context_relevance", 0.0)),
@@ -84,7 +77,7 @@ def evaluate_faithfulness(
 
     except Exception as e:
         # 평가 에러 시 기본값 반환
-        return RAGEvalResult(
+        return AnswerEvaluation(
             faithfulness=0.0,
             answer_relevance=0.0,
             context_relevance=0.0,

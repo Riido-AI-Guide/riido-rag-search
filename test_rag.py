@@ -1,4 +1,5 @@
 import json
+from dto import AnswerEvaluation
 from evaluator import evaluate_faithfulness
 from llm import generate_rag_answer
 from rag_A import search
@@ -19,28 +20,29 @@ for query in test_queries:
     # 사용자 질문 재생성
     print(f"\n[원본 질문] {query}")
     transformed_query = transform_user_query(query)
-    print(f"[정제된 질문] {transformed_query['cleaned_query']}")
-    print(f"[연관 검색어] {transformed_query['search_queries']}")
-    
+    print(f"[정제된 질문] {transformed_query.cleaned_query}")
+    print(f"[연관 검색어] {transformed_query.search_queries}")
+
     # 답변할 수 없는 질문일 경우 검색을 하지 않음
-    if not transformed_query["needs_search"]:
+    if not transformed_query.needs_search:
         print("답변할 수 없는 질문입니다. 검색을 수행하지 않습니다.")
     else:
         # 문서 검색
-        searched_docs = search(transformed_query["cleaned_query"])["documents"]
+        searched_docs = search(transformed_query.cleaned_query)
         print(f"[검색된 문서 수] {len(searched_docs)}")
-        print(f"[검색된 문서] {json.dumps(searched_docs, ensure_ascii=False, indent=2)}")
+        
         for i, d in enumerate(searched_docs, 1):
-            print(f"  {i}. [{d['type']}] [{d['section']}])")
+            print(f"  {i}. [{d.source_type}] [{d.section}])")
+            print(f"     {d.content[:100]}...")  # 문서 내용 일부만 출력
         
         # 답변 생성
-        answer = generate_rag_answer(transformed_query["cleaned_query"], searched_docs)
-        print(f"[생성된 답변] {answer['answer']}")
+        answer = generate_rag_answer(transformed_query.cleaned_query, searched_docs)
+        print(f"[생성된 답변] {answer.message}")
         
         # 답변 평가
         eval_result = evaluate_faithfulness(
-            question=transformed_query["cleaned_query"],
-            context_documents=[doc["content"] for doc in searched_docs],
-            generated_answer=answer["answer"]
+            question=transformed_query.cleaned_query,
+            context_documents=[doc.content for doc in searched_docs],
+            generated_answer=answer.message
         )
-        print(f"[평가 결과] {json.dumps(eval_result.__dict__, ensure_ascii=False, indent=2)}")
+        print(f"[평가 결과] {eval_result}")
