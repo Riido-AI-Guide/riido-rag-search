@@ -9,12 +9,15 @@ import os
 import re
 import json
 import time
+from typing import Dict, List
 import requests
 import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
 from kiwipiepy import Kiwi
+
+from dto import RawChunk, RetrievedChunk
 
 load_dotenv()
 
@@ -42,9 +45,9 @@ def setup_database(embedding_dim: int):
             id SERIAL PRIMARY KEY,
             content TEXT NOT NULL,
             embedding VECTOR({embedding_dim}),
-            doc_title TEXT,
-            section_path TEXT,
-            chunk_type TEXT,
+            title TEXT,
+            section TEXT,
+            source_type TEXT,
             content_tsv TSVECTOR
         );
     """)
@@ -65,9 +68,8 @@ def is_db_empty() -> bool:
     return count == 0
 
 
-def chunk_riido_docs(raw_text: str, max_chars: int = 600):
+def chunk_riido_docs(chunks: List[RawChunk], raw_text: str, max_chars: int = 600):
     doc_parts = re.split(r"\n# (.+?)\n", raw_text)
-    chunks = []
     seen_titles = set()
 
     for i in range(1, len(doc_parts), 2):
@@ -91,17 +93,15 @@ def chunk_riido_docs(raw_text: str, max_chars: int = 600):
             if text:
                 path = f"{title} > {current_heading}" if current_heading else title
                 for k in range(0, len(text), max_chars):
-                    chunks.append({
-                        "content": f"[{path}]\n{text[k:k + max_chars]}",
-                        "doc_title": title,
-                        "section_path": path,
-                        "chunk_type": "guide",
-                    })
+                    chunks.append(RawChunk(
+                        content=f"[{path}]\n{text[k:k + max_chars]}",
+                        title=title,
+                        section=path,
+                        source_type="guide"
+                    ))
 
             if heading:
                 current_heading = heading
-
-    return chunks
 
 
 def clean_greeting_and_intro(text: str) -> str:
@@ -133,7 +133,7 @@ def find_question(user_msgs: list) -> str:
     return clean_greeting_and_intro(user_msgs[0]) if user_msgs else ""
 
 
-def chunk_support_qa(json_path: str):
+def chunk_support_qa(chunks: List[RawChunk], json_path: str):
     """
     question: 실제 내용이 담긴 첫 user 발화
     answer: manager(운영자) 답변만 사용
@@ -143,7 +143,7 @@ def chunk_support_qa(json_path: str):
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    chunks = []
+    
     for item in data["items"]:
         user_msgs = [c["text"] for c in item["conversation"] if c["role"] == "user"]
         manager_msgs = [c["text"] for c in item["conversation"] if c["role"] == "manager"]
@@ -160,30 +160,28 @@ def chunk_support_qa(json_path: str):
 
         first_question = find_question(user_msgs) if user_msgs else item["question"][:100]
 
-        chunks.append({
-            "content": f"질문: {first_question}\n답변: {answer}",
-            "doc_title": "실제 고객 문의",
-            "section_path": f"고객문의 > {item['sample_id']}",
-            "chunk_type": "support_qa",
-        })
-
-    return chunks
+        chunks.append(RawChunk(
+            content=f"질문: {first_question}\n답변: {answer}",
+            title="실제 고객 문의",
+            section=f"고객문의 > {item['sample_id']}",
+            source_type="support_qa"
+        ))
 
 
-def embed_and_store(chunks: list, batch_size: int = 90):
+def embed_and_store(chunks: List[RawChunk], batch_size: int = 90):
     conn = get_connection()
     cur = conn.cursor()
 
     for i in range(0, len(chunks), batch_size):
         batch = chunks[i:i + batch_size]
-        vectors = embeddings.embed_documents([c["content"] for c in batch])
+        vectors = embeddings.embed_documents([c.content for c in batch])
 
         for chunk, vector in zip(batch, vectors):
-            keywords_text = extract_keywords(chunk["content"])
+            chunk.content_keywords = extract_keywords(chunk.content)
             cur.execute("""
-                INSERT INTO doc_chunks (content, embedding, doc_title, section_path, chunk_type, content_tsv)
+                INSERT INTO doc_chunks (content, embedding, title, section, source_type, content_tsv)
                 VALUES (%s, %s, %s, %s, %s, to_tsvector('simple', %s))
-            """, (chunk["content"], vector, chunk["doc_title"], chunk["section_path"], chunk["chunk_type"], keywords_text))
+            """, (chunk.content, vector, chunk.title, chunk.section, chunk.source_type, chunk.content_keywords))
 
         conn.commit()
         print(f"  → {min(i + batch_size, len(chunks))}/{len(chunks)}개 임베딩 완료")
@@ -203,14 +201,17 @@ def build_index(support_qa_path: str = None):
         print("📂 이미 데이터가 있어 재수집을 건너뜁니다.")
         return
 
+    guide_chunks: List[RawChunk] = []
+    
     res = requests.get("https://docs.riido.io/llms-full.txt")
-    guide_chunks = chunk_riido_docs(res.text)
+    chunk_riido_docs(guide_chunks, res.text)
     print(f"✅ 이용가이드 {len(guide_chunks)}개 청크")
     embed_and_store(guide_chunks)
 
     if support_qa_path:
         time.sleep(5)
-        qa_chunks = chunk_support_qa(support_qa_path)
+        qa_chunks: List[RawChunk] = []
+        chunk_support_qa(qa_chunks, support_qa_path)
         print(f"✅ 고객 QA {len(qa_chunks)}개 청크")
         embed_and_store(qa_chunks)
 
@@ -220,7 +221,7 @@ def vector_search(query: str, top_k: int = 20):
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
-        SELECT id, content, doc_title, section_path, chunk_type,
+        SELECT id, content, title, section, source_type,
                1 - (embedding <=> %s::vector) AS similarity
         FROM doc_chunks ORDER BY embedding <=> %s::vector LIMIT %s
     """, (query_vector, query_vector, top_k))
@@ -235,7 +236,7 @@ def keyword_search(query: str, top_k: int = 20):
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
-        SELECT id, content, doc_title, section_path, chunk_type,
+        SELECT id, content, title, section, source_type,
                ts_rank(content_tsv, plainto_tsquery('simple', %s)) AS rank
         FROM doc_chunks WHERE content_tsv @@ plainto_tsquery('simple', %s)
         ORDER BY rank DESC LIMIT %s
@@ -249,36 +250,49 @@ def keyword_search(query: str, top_k: int = 20):
 def reciprocal_rank_fusion(vector_results, keyword_results, k: int = 30, vector_weight: float = 0.5):
     keyword_weight = 1 - vector_weight
     scores = {}
+    chunk_map: Dict[int, RetrievedChunk] = {}
+    
     for rank, row in enumerate(vector_results):
-        scores.setdefault(row["id"], {"data": row, "score": 0})
-        scores[row["id"]]["score"] += vector_weight * (1 / (k + rank + 1))
+        chunk_id = row["id"]
+        
+        if chunk_id not in chunk_map:
+            chunk_map[chunk_id] = RetrievedChunk(
+                id=chunk_id,
+                title=row["title"],
+                section=row["section"],
+                content=row["content"],
+                source_type=row["source_type"],
+                v_similarity=row.get("similarity", 0.0)
+            )
+        else:
+            chunk_map[chunk_id].v_similarity = row.get("similarity", 0.0)
+        chunk_map[chunk_id].rrf_score += vector_weight * (1 / (k + rank + 1))
+    
     for rank, row in enumerate(keyword_results):
-        scores.setdefault(row["id"], {"data": row, "score": 0})
-        scores[row["id"]]["score"] += keyword_weight * (1 / (k + rank + 1))
-    return sorted(scores.values(), key=lambda x: x["score"], reverse=True)
+        chunk_id = row["id"]
+        
+        if chunk_id not in chunk_map:
+            chunk_map[chunk_id] = RetrievedChunk(
+                id=chunk_id,
+                title=row["title"],
+                section=row["section"],
+                content=row["content"],
+                source_type=row["source_type"],
+                k_similarity=row.get("rank", 0.0)
+            )
+        else:
+            chunk_map[chunk_id].k_similarity = row.get("rank", 0.0)
+        chunk_map[chunk_id].rrf_score += keyword_weight * (1 / (k + rank + 1))
+    return sorted(chunk_map.values(), key=lambda x: x.rrf_score, reverse=True)
 
 
 def search(query: str, top_k: int = 3, vector_weight: float = 0.5) -> dict:
     """계약: {"documents": [{"title","content","section","rrf_score","similarity","type"}]}"""
     v_results = vector_search(query, top_k=20)
     k_results = keyword_search(query, top_k=20)
-    fused = reciprocal_rank_fusion(v_results, k_results, vector_weight=vector_weight)[:top_k]
+    fused_chunks: List[RetrievedChunk] = reciprocal_rank_fusion(v_results, k_results, vector_weight=vector_weight)[:top_k]
 
-    similarity_map = {row["id"]: row["similarity"] for row in v_results}
-
-    documents = []
-    for item in fused:
-        row = item["data"]
-        documents.append({
-            "title": row["doc_title"],
-            "content": row["content"],
-            "section": row["section_path"],
-            "rrf_score": item["score"],
-            "similarity": similarity_map.get(row["id"]),
-            "type": row["chunk_type"],
-        })
-
-    return {"documents": documents}
+    return fused_chunks
 
 
 if __name__ == "__main__":
@@ -298,8 +312,8 @@ if __name__ == "__main__":
         for q in test_questions:
             result = search(q, vector_weight=vw)
             print(f"\n[질문] {q}")
-            for i, d in enumerate(result["documents"], 1):
-                sim = f"{d['similarity']:.4f}" if d["similarity"] is not None else "N/A"
-                print(f"  {i}. [{d['type']}] [{d['section']}] (similarity={sim}, rrf={d['rrf_score']:.4f})")
-                print(f"     {d['content'][:300]}...")
+            for i, d in enumerate(result, 1):
+                sim = f"{d.v_similarity:.4f}" if d.v_similarity is not None else "N/A"
+                print(f"  {i}. [{d.source_type}] [{d.section}] (similarity={sim}, rrf={d.rrf_score:.4f})")
+                print(f"     {d.content[:300]}...")
             print("-" * 50)
