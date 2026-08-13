@@ -3,7 +3,7 @@ name: feature request
 about: Suggest an idea for this project
 title: ''
 labels: ''
-assignees: '3405000'
+assignees: ''
 
 ---
 
