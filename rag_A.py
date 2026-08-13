@@ -1,9 +1,8 @@
 """
-A파트 — search(query) 함수가 이 파일의 산출물
-이후 이 함수의 반환값(dict)을 받아서 작업하면 됨
-
+A파트 — search() 함수가 이 파일의 산출물
 하이브리드 검색: 벡터 + Kiwi 기반 키워드 검색을 RRF로 결합
 rrf_score(정렬용)와 similarity(신뢰도 판단용)를 분리해서 반환
+임베딩: OpenAI text-embedding-3-small
 """
 
 import os
@@ -14,18 +13,17 @@ import requests
 import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from kiwipiepy import Kiwi
 
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL", "dbname=riido user=postgres password=postgres host=localhost port=5432")
-embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-2")
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 kiwi = Kiwi()
 
 
 def extract_keywords(text: str) -> str:
-    """조사/어미는 버리고 명사·동사·형용사만 추출"""
     tokens = kiwi.tokenize(text)
     keywords = [t.form for t in tokens if t.tag.startswith(("NN", "VV", "VA"))]
     return " ".join(keywords)
@@ -38,7 +36,6 @@ def get_connection():
 def setup_database(embedding_dim: int):
     conn = get_connection()
     cur = conn.cursor()
-
     cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
     cur.execute(f"""
         CREATE TABLE IF NOT EXISTS doc_chunks (
@@ -52,7 +49,7 @@ def setup_database(embedding_dim: int):
         );
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_doc_chunks_tsv ON doc_chunks USING GIN (content_tsv);")
-
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_doc_chunks_embedding ON doc_chunks USING hnsw (embedding vector_cosine_ops);")
     conn.commit()
     cur.close()
     conn.close()
@@ -107,19 +104,64 @@ def chunk_riido_docs(raw_text: str, max_chars: int = 600):
     return chunks
 
 
+def clean_greeting_and_intro(text: str) -> str:
+    """인사말 + 뒤이어 나오는 자기소개(마스킹 태그 포함 문장) 제거"""
+    text = text.strip()
+    text = re.sub(r'^(네\s+|담당자님\s+|<[^>]+>\s+)*안녕하세요[!.,]?\s*', '', text)
+    text = re.sub(r'^[^\n.!?]{0,80}?<[^>]+>[^\n.!?]{0,40}(입니다|팀입니다)[.!]?\s*', '', text)
+    return text.strip()
+
+
+def clean_manager_text(text: str) -> str:
+    return clean_greeting_and_intro(text)
+
+
+def is_content_bearing(raw_text: str) -> bool:
+    """인사말 뗀 후 이메일/태그/기호를 빼고도 실질 내용이 남는지 판별"""
+    text = clean_greeting_and_intro(raw_text)
+    if len(text) < 15:
+        return False
+    stripped = re.sub(r'<[^>]+>|[\w.+-]+@[\w-]+\.[\w.-]+|[\s!.,]', '', text)
+    return len(stripped) >= 5
+
+
+def find_question(user_msgs: list) -> str:
+    """실제 내용이 담긴 첫 발화를 질문으로 채택, 없으면 첫 발화 그대로"""
+    for msg in user_msgs:
+        if is_content_bearing(msg):
+            return clean_greeting_and_intro(msg)
+    return clean_greeting_and_intro(user_msgs[0]) if user_msgs else ""
+
+
 def chunk_support_qa(json_path: str):
-    """마지막 bot 요약 메시지만 사용 (개인화된 상담 대화는 제외)"""
+    """
+    question: 실제 내용이 담긴 첫 user 발화
+    answer: manager(운영자) 답변만 사용
+    manager 답변 없는 상담은 제외
+    (bot 요약은 목차 수준이라 구체적 방법 안내라는 목적에 안 맞음)
+    """
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     chunks = []
     for item in data["items"]:
-        bot_msgs = [c["text"] for c in item["conversation"] if c["role"] == "bot"]
-        if not bot_msgs or len(bot_msgs[-1]) < 20:
+        user_msgs = [c["text"] for c in item["conversation"] if c["role"] == "user"]
+        manager_msgs = [c["text"] for c in item["conversation"] if c["role"] == "manager"]
+
+        if not manager_msgs:
             continue
 
+        cleaned = [clean_manager_text(m) for m in manager_msgs]
+        cleaned = [c for c in cleaned if len(c) > 10]
+        answer = " ".join(cleaned)
+
+        if len(answer) < 20:
+            continue
+
+        first_question = find_question(user_msgs) if user_msgs else item["question"][:100]
+
         chunks.append({
-            "content": f"질문: {item['question']}\n답변: {bot_msgs[-1]}",
+            "content": f"질문: {first_question}\n답변: {answer}",
             "doc_title": "실제 고객 문의",
             "section_path": f"고객문의 > {item['sample_id']}",
             "chunk_type": "support_qa",
@@ -147,7 +189,7 @@ def embed_and_store(chunks: list, batch_size: int = 90):
         print(f"  → {min(i + batch_size, len(chunks))}/{len(chunks)}개 임베딩 완료")
 
         if i + batch_size < len(chunks):
-            time.sleep(60)  # rate limit 대응
+            time.sleep(5)
 
     cur.close()
     conn.close()
@@ -167,7 +209,7 @@ def build_index(support_qa_path: str = None):
     embed_and_store(guide_chunks)
 
     if support_qa_path:
-        time.sleep(60)
+        time.sleep(5)
         qa_chunks = chunk_support_qa(support_qa_path)
         print(f"✅ 고객 QA {len(qa_chunks)}개 청크")
         embed_and_store(qa_chunks)
@@ -190,7 +232,6 @@ def vector_search(query: str, top_k: int = 20):
 
 def keyword_search(query: str, top_k: int = 20):
     query_keywords = extract_keywords(query)
-
     conn = get_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
@@ -205,22 +246,23 @@ def keyword_search(query: str, top_k: int = 20):
     return rows
 
 
-def reciprocal_rank_fusion(vector_results, keyword_results, k: int = 60):
+def reciprocal_rank_fusion(vector_results, keyword_results, k: int = 30, vector_weight: float = 0.5):
+    keyword_weight = 1 - vector_weight
     scores = {}
     for rank, row in enumerate(vector_results):
         scores.setdefault(row["id"], {"data": row, "score": 0})
-        scores[row["id"]]["score"] += 1 / (k + rank + 1)
+        scores[row["id"]]["score"] += vector_weight * (1 / (k + rank + 1))
     for rank, row in enumerate(keyword_results):
         scores.setdefault(row["id"], {"data": row, "score": 0})
-        scores[row["id"]]["score"] += 1 / (k + rank + 1)
+        scores[row["id"]]["score"] += keyword_weight * (1 / (k + rank + 1))
     return sorted(scores.values(), key=lambda x: x["score"], reverse=True)
 
 
-def search(query: str, top_k: int = 3) -> dict:
-    """B파트와 합의: {"documents": [{"title","content","section","rrf_score","similarity","type"}]}"""
+def search(query: str, top_k: int = 3, vector_weight: float = 0.5) -> dict:
+    """계약: {"documents": [{"title","content","section","rrf_score","similarity","type"}]}"""
     v_results = vector_search(query, top_k=20)
     k_results = keyword_search(query, top_k=20)
-    fused = reciprocal_rank_fusion(v_results, k_results)[:top_k]
+    fused = reciprocal_rank_fusion(v_results, k_results, vector_weight=vector_weight)[:top_k]
 
     similarity_map = {row["id"]: row["similarity"] for row in v_results}
 
@@ -239,8 +281,6 @@ def search(query: str, top_k: int = 3) -> dict:
     return {"documents": documents}
 
 
-#### 테스트용 #####
-
 if __name__ == "__main__":
     build_index(support_qa_path="./qa_reviewed_20260804.json")
 
@@ -252,12 +292,14 @@ if __name__ == "__main__":
         "회원 탈퇴 어떻게 해?",
     ]
 
-    for q in test_questions:
-        result = search(q)
-        print(f"\n[질문] {q}")
-        for i, d in enumerate(result["documents"], 1):
-            sim = f"{d['similarity']:.4f}" if d["similarity"] is not None else "N/A"
-            print(f"  {i}. [{d['type']}] [{d['section']}] (similarity={sim}, rrf={d['rrf_score']:.4f})")
-            print(f"     {d['content'][:80]}...")
-        print("-" * 50)
-        time.sleep(5)
+    # vector_weight 두 가지만 비교 (0.5=벡터·키워드 동등, 0.9=벡터 위주)
+    for vw in [0.5, 0.9]:
+        print(f"\n{'='*20} vector_weight={vw} {'='*20}")
+        for q in test_questions:
+            result = search(q, vector_weight=vw)
+            print(f"\n[질문] {q}")
+            for i, d in enumerate(result["documents"], 1):
+                sim = f"{d['similarity']:.4f}" if d["similarity"] is not None else "N/A"
+                print(f"  {i}. [{d['type']}] [{d['section']}] (similarity={sim}, rrf={d['rrf_score']:.4f})")
+                print(f"     {d['content'][:300]}...")
+            print("-" * 50)
