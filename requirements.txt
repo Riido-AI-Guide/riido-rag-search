@@ -1,0 +1,6 @@
+requests
+psycopg2-binary
+python-dotenv
+langchain_openai
+kiwipiepy
+openai
