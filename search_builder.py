@@ -3,7 +3,7 @@ search_builder.py — 검색용 테이블(search_units) 빌드
 
 rag_view_sentences.json(가설질문·실제질문·맥락요약 문장)을 검색 단위로 적재한다.
 - 문장 1개 = 검색 단위 1행. 답변 본문은 answer_units에 있고 여기엔 doc_id만 둔다.
-- 키워드 검색: Kiwi로 명사/동사/형용사만 뽑아 to_tsvector('simple', ...)  (rag_A.py와 동일)
+- 키워드 검색: Kiwi로 명사/동사/형용사만 뽑아 to_tsvector('simple', ...)  (rag_search.py와 동일)
 - 벡터 검색: OpenAI text-embedding-3-small
 - 이미 적재된 문장은 다시 임베딩하지 않는다(증분). JSON에서 빠진 문장은 정리한다.
 """
