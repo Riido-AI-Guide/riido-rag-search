@@ -2,18 +2,18 @@ import json
 from dto import AnswerEvaluation
 from evaluator import evaluate_faithfulness
 from llm import generate_rag_answer
-from rag_A import search
+from rag_search import search
 from query_transform import transform_user_query
 
 
 
 test_queries = [
-    "팀원을 어떻게 추가해?"
-    # "팀을 삭제하면 어떻게 돼?",
-    # "스프린트 기간은 최대 몇 주까지 설정할 수 있어?",
-    # "학생이면 뤼이도 유료 요금제 무료로 쓸 수 있어?",
-    # "PR 연동 문제 해결하는 방법",
-    # "회원 탈퇴 어떻게 해?",
+    "팀원을 어떻게 추가해?",
+    "팀을 삭제하면 어떻게 돼?",
+    "스프린트 기간은 최대 몇 주까지 설정할 수 있어?",
+    "학생이면 뤼이도 유료 요금제 무료로 쓸 수 있어?",
+    "PR 연동 문제 해결하는 방법",
+    "회원 탈퇴 어떻게 해?",
 ]
 
 for query in test_queries:
@@ -27,10 +27,16 @@ for query in test_queries:
     if not transformed_query.needs_search:
         print("답변할 수 없는 질문입니다. 검색을 수행하지 않습니다.")
     else:
-        # 문서 검색
-        searched_docs = search(transformed_query.cleaned_query)
+        # 문서 검색 (검색 단위 top-k → 해당 doc_id의 답변 문서)
+        searched_hits, searched_docs = search(transformed_query.cleaned_query)
+        print(f"[검색된 문장 수] {len(searched_hits)}")
+
+        for i, h in enumerate(searched_hits, 1):
+            print(f"  {i}. [{h.view_type}] {h.doc_id}")
+            print(f"     {h.text}")
+
         print(f"[검색된 문서 수] {len(searched_docs)}")
-        
+
         for i, d in enumerate(searched_docs, 1):
             print(f"  {i}. [{d.source_type}] [{d.section}])")
             print(f"     {d.content[:100]}...")  # 문서 내용 일부만 출력

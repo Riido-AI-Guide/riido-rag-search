@@ -8,5 +8,7 @@ class RawChunk:
     section: str # 문서 경로
     content: str # 문서 내용
     content_keywords: str = ""  # 문서의 불용어, 어근 등을 제거
-    embedding: List[float] = field(default_factory=list) # 임베딩된 벡터
     source_type: str = field(default="guide") # 문서 유형: guide/qa
+    doc_id: str = "" # 답변 단위 식별자 (answer_units PK)
+    ord_idx: int = 0 # 원문 등장 순서
+    source_hash: str = "" # content 해시 (증분 빌드 판정용)
