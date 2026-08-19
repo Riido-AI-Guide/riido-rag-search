@@ -4,5 +4,6 @@ from .AnswerEvaluation import AnswerEvaluation
 from .Answer import Answer
 from .QnA import QnA
 from .Query import Query
+from .SearchChunk import SearchChunk
 
-__all__ = ["RawChunk", "Query", "AnswerEvaluation", "Answer", "QnA", "RetrievedChunk"]
+__all__ = ["RawChunk", "Query", "AnswerEvaluation", "Answer", "QnA", "RetrievedChunk", "SearchChunk"]
