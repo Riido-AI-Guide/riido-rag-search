@@ -1,0 +1,83 @@
+"""
+api/main.py — FastAPI 진입점
+
+실행:  uvicorn api.main:app --reload      (프로젝트 루트에서)
+문서:  http://127.0.0.1:8000/docs
+"""
+
+import logging
+import time
+from contextlib import asynccontextmanager
+
+import psycopg2
+from fastapi import FastAPI, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from api.config import get_settings
+from db import close_pool, init_pool
+from api.routers import answer_units, chat, health, search_units
+
+logger = logging.getLogger("api")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings = get_settings()
+    # rag_search와 API 조회가 같은 풀을 쓴다 (db.py). 여기서 미리 만들어 두지 않으면
+    # 첫 사용 시 지연 초기화되므로 크기 설정이 반영되지 않는다.
+    init_pool(settings.database_url, settings.db_pool_min, settings.db_pool_max)
+
+    # rag_search는 import 시점에 Kiwi와 임베딩 클라이언트를 만든다(수 초 소요).
+    # 첫 요청이 이 비용을 떠안지 않도록 부팅 때 미리 끌어올린다.
+    started = time.perf_counter()
+    import rag_search  # noqa: F401
+    logger.info("검색 모듈 로드 완료 (%.1fs)", time.perf_counter() - started)
+
+    yield
+    close_pool()
+
+
+def create_app() -> FastAPI:
+    settings = get_settings()
+
+    app = FastAPI(
+        title="Riido RAG Search API",
+        version="0.1.0",
+        description="뤼이도 이용 가이드 기반 RAG 검색·답변 API",
+        lifespan=lifespan,
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    for router in (health.router, chat.router, answer_units.router, search_units.router):
+        app.include_router(router, prefix=settings.api_prefix)
+
+    @app.exception_handler(psycopg2.errors.UndefinedTable)
+    async def undefined_table_handler(request: Request, exc: psycopg2.errors.UndefinedTable):
+        """인덱스가 아직 없을 때 500 대신 원인을 알려준다"""
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "detail": "인덱스 테이블이 없습니다.",
+                "hint": "answer_builder.py → search_builder.py 순으로 실행하세요.",
+            },
+        )
+
+    @app.exception_handler(psycopg2.OperationalError)
+    async def db_down_handler(request: Request, exc: psycopg2.OperationalError):
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"detail": "데이터베이스에 연결할 수 없습니다.", "hint": str(exc).strip()},
+        )
+
+    return app
+
+
+app = create_app()
