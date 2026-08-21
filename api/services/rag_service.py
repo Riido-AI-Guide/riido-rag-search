@@ -5,25 +5,19 @@ test_rag.py가 스크립트로 하던 흐름을 그대로 함수로 옮긴 것�
 기존 모듈은 수정하지 않고 호출만 한다.
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import List, Optional
 
 from dto import AnswerEvaluation, RetrievedChunk, SearchHit
-from evaluator import evaluate_faithfulness
+from evaluator import EvaluationError, evaluate_faithfulness
 from llm import generate_rag_answer
 from query_transform import transform_user_query
 from rag_search import search as rag_search
 
-# llm.py는 예외를 잡아 이 문자열로 시작하는 메시지를 정상 반환한다.
-# API에서는 200 OK로 나가면 안 되므로 여기서 걸러 502로 승격한다.
-# (llm.py가 예외를 그대로 올리도록 바뀌면 이 분기는 지워도 된다)
-LLM_ERROR_PREFIX = "답변 생성 중 오류가 발생했습니다"
+logger = logging.getLogger(__name__)
 
 NO_SEARCH_MESSAGE = "안녕하세요! 뤼이도 이용 가이드에 대해 궁금한 점을 물어봐 주세요."
-
-
-class AnswerGenerationError(RuntimeError):
-    """LLM 호출 실패 (llm.py가 문자열로 감싼 오류를 되살린 것)"""
 
 
 @dataclass
@@ -65,17 +59,21 @@ def ask(
         transformed.cleaned_query, top_k=top_k, vector_weight=vector_weight
     )
 
+    # LlmError는 잡지 않는다. 답변 생성 실패는 요청 실패이므로 그대로 올려보낸다.
     answer = generate_rag_answer(transformed.cleaned_query, documents)
-    if answer.message.startswith(LLM_ERROR_PREFIX):
-        raise AnswerGenerationError(answer.message)
 
     evaluation = None
     if evaluate:
-        evaluation = evaluate_faithfulness(
-            question=transformed.cleaned_query,
-            context_documents=[d.content for d in documents],
-            generated_answer=answer.message,
-        )
+        # 평가는 부가 정보다. 실패해도 이미 만들어진 답변까지 버릴 이유는 없으므로
+        # 로그만 남기고 evaluation=None으로 둔다(0.0으로 채우면 환각 판정과 구분되지 않는다).
+        try:
+            evaluation = evaluate_faithfulness(
+                question=transformed.cleaned_query,
+                context_documents=[d.content for d in documents],
+                generated_answer=answer.message,
+            )
+        except EvaluationError as e:
+            logger.warning("답변 평가 실패 (답변은 정상 반환): %s", e)
 
     return AskResult(
         raw_query=query,

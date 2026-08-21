@@ -107,9 +107,11 @@ api/
   마친 뒤에 빌리므로, 네트워크 대기 동안 커넥션을 붙잡지 않는다.
   단, [answer_builder.py](../answer_builder.py)·[search_builder.py](../search_builder.py)는
   배치 작업이라 각자 커넥션을 직접 연다(장시간 트랜잭션이 풀을 점유하면 안 되기 때문).
-- **`llm.py`의 오류 삼킴**: 예외를 잡아 `"답변 생성 중 오류가 발생했습니다: ..."` 문자열을 정상
-  답변처럼 반환한다. API가 200 OK로 내보내면 안 되므로 `rag_service`가 이 접두사를 감지해 502로
-  올린다. 문자열 비교라 취약하니, `llm.py`가 예외를 그대로 올리도록 바뀌면 그 분기는 지우면 된다.
+- **LLM 오류 처리**: [llm.py](../llm.py)는 실패 시 `LlmError`를 올린다. `main.py`의 예외 핸들러가
+  502로 변환하므로 오류 메시지가 정상 답변처럼 200 OK로 나가지 않는다.
+  [evaluator.py](../evaluator.py)는 `EvaluationError`를 올린다. 평가는 부가 정보라
+  `rag_service`가 잡아서 로그만 남기고 `evaluation: null`로 응답한다 — 실패를 0.0으로 채우면
+  "완전한 환각" 판정과 값이 같아져 구분할 수 없기 때문이다.
 - **부팅 비용**: `rag_search` import 시 Kiwi와 임베딩 클라이언트가 생성된다. 첫 요청이 이 비용을
   떠안지 않도록 `lifespan`에서 미리 import한다.
 

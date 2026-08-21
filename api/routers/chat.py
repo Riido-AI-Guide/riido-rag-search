@@ -5,7 +5,7 @@ api/routers/chat.py — 질의응답 및 검색 전용 엔드포인트
 async def로 두면 이벤트 루프가 막힌다. FastAPI가 스레드풀에서 실행해 준다.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 
 from api.config import Settings, get_settings
 from api.deps import resolve_search_params
@@ -32,12 +32,10 @@ router = APIRouter(tags=["chat"])
 def ask(req: AskRequest, settings: Settings = Depends(get_settings)) -> AskResponse:
     top_k, vector_weight = resolve_search_params(req.top_k, req.vector_weight, settings)
 
-    try:
-        result = rag_service.ask(
-            query=req.query, top_k=top_k, vector_weight=vector_weight, evaluate=req.evaluate
-        )
-    except rag_service.AnswerGenerationError as e:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(e))
+    # LlmError는 api/main.py의 예외 핸들러가 502로 변환한다
+    result = rag_service.ask(
+        query=req.query, top_k=top_k, vector_weight=vector_weight, evaluate=req.evaluate
+    )
 
     return AskResponse(
         raw_query=result.raw_query,

@@ -80,7 +80,10 @@ class AskResponse(BaseModel):
 
     documents: Optional[List[AnswerUnitOut]] = None
     hits: Optional[List[SearchHitOut]] = None
-    evaluation: Optional[EvaluationOut] = None
+    evaluation: Optional[EvaluationOut] = Field(
+        default=None,
+        description="evaluate=true여도 평가 호출이 실패하면 null이다 (0.0으로 채우면 환각 판정과 구분되지 않음)",
+    )
 
 
 class SearchRequest(SearchOptions):

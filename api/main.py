@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from api.config import get_settings
 from db import close_pool, init_pool
 from api.routers import answer_units, chat, health, search_units
+from llm import LlmError
 
 logger = logging.getLogger("api")
 
@@ -68,6 +69,15 @@ def create_app() -> FastAPI:
                 "detail": "인덱스 테이블이 없습니다.",
                 "hint": "answer_builder.py → search_builder.py 순으로 실행하세요.",
             },
+        )
+
+    @app.exception_handler(LlmError)
+    async def llm_error_handler(request: Request, exc: LlmError):
+        """답변 생성 실패를 200 OK로 내보내지 않는다"""
+        logger.exception("답변 생성 실패")
+        return JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            content={"detail": str(exc), "hint": "잠시 후 다시 시도해 주세요."},
         )
 
     @app.exception_handler(psycopg2.OperationalError)
