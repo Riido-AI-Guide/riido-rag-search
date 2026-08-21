@@ -14,7 +14,7 @@ dto/ 패키지의 dataclass(도메인 모델)와 API 스키마(Pydantic)를 분�
 변환은 각 스키마의 from_domain() 클래스메서드 한 곳에서만 한다.
 """
 
-from typing import Generic, List, Optional, TypeVar
+from typing import Generic, List, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -27,8 +27,3 @@ class Page(BaseModel, Generic[T]):
     limit: int
     offset: int
     items: List[T]
-
-
-class ErrorResponse(BaseModel):
-    detail: str
-    hint: Optional[str] = Field(default=None, description="복구 방법 안내")
