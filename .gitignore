@@ -11,3 +11,4 @@ __pycache__/
 golden_labels_draft.json
 eval_transform_cache.json
 eval_results.csv
+_to_delete/
