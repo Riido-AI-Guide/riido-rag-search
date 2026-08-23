@@ -19,7 +19,16 @@ def evaluate_faithfulness(
     load_dotenv()
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     
-    context_text = "\n---\n".join(context_documents) if context_documents else "참고 문서 없음"
+    # 문서마다 [참고 문서 N] 번호를 붙인다.
+    # 프롬프트가 "어느 문서에서 근거를 얻었는지" 번호로 답하게 시키므로,
+    # 번호 없이 이어붙이면 평가자가 지킬 수 없는 지시가 된다.
+    if context_documents:
+        context_text = "\n\n".join(
+            f"[참고 문서 {i}]\n{doc}"
+            for i, doc in enumerate(context_documents, start=1)
+        )
+    else:
+        context_text = "참고 문서 없음"
 
     EVAL_SYSTEM_PROMPT = """
 당신은 RAG 시스템의 답변 환각(Hallucination) 및 품질을 엄격하게 검수하는 전문 평가자입니다.
@@ -39,12 +48,12 @@ def evaluate_faithfulness(
    - [생성된 답변]이 [참고 문서]의 어느 부분으로부터 근거를 얻었는지 해당 문장 명시적으로 발췌.
 
 [JSON 응답 형식]
-{{
+{
   "faithfulness": 1.0,
   "answer_relevance": 1.0,
   "context_relevance": 1.0,
   "reason": "답변의 '팀 관리 메뉴'는 [참고 문서 2]의 '팀 관리' 섹션에서 근거를 찾을 수 있습니다. '이메일 주소' 관련 내용은 [참고 문서 1]에 명시되어 있습니다."
-}}
+}
 """
     
     EVAL_USER_PROMPT = f"""
@@ -76,10 +85,13 @@ def evaluate_faithfulness(
         )
 
     except Exception as e:
-        # 평가 에러 시 기본값 반환
+        # 평가 실패는 "환각 답변(0점)"과 다르다. error=True로 구분해서 돌려주고,
+        # 평균 등 점수 집계에서는 error=True인 결과를 반드시 제외해야 한다.
+        # (0.0으로 섞으면 API 오류 몇 건이 전체 평균을 끌어내린다)
         return AnswerEvaluation(
             faithfulness=0.0,
             answer_relevance=0.0,
             context_relevance=0.0,
-            reason=f"평가 프로세스 중 오류 발생: {str(e)}"
+            reason=f"평가 프로세스 중 오류 발생: {str(e)}",
+            error=True,
         )
