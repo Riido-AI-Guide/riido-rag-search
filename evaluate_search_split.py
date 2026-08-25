@@ -1,28 +1,32 @@
 """
-evaluate_search_split.py — 검색 평가 본체
+evaluate_search_split.py — 검색 평가 본체 (2차: 혼합 하이브리드 개선안 검증)
 
 golden_set.json(질문 → 정답 doc_id)으로 검색 품질을 Hit@1 / Hit@3 / MRR로 채점한다.
 
-비교 대상 (한 번 실행에 4가지 모두 채점):
-  [저장 구조 비교] ← 1부의 핵심 질문 "두 저장소로 나눈 설계가 효과 있는가"
-    A-cleaned : 현행 방식. search_units(가설질문·실제질문·요약 문장)를 하이브리드 검색
-    B-cleaned : 비교 방식. 원문(answer_units.content)을 같은 하이브리드로 직접 검색
-  [검색 모드 실험] ← search_queries 처리 결정용 (팀 회의 판정 기준: Hit@3 ±3%p)
-    A-multi   : query_transform의 변형 검색어들로 각각 검색 후 RRF 합산
-    A-raw     : 정제 없이 원질문 그대로 검색 (query_transform 효과 검증)
+[이번 실험의 가설]
+1. 질문형 정제: 검색 인덱스(search_units)가 질문형 문장(hypo_q·real_q) 중심이므로,
+   쿼리도 키워드체("작업 생성 방법")가 아니라 질문형("작업은 어떻게 만드나요?")으로
+   정제하면 벡터 거리가 더 가까워진다.
+2. 혼합 하이브리드: 벡터 검색은 검색용 문장(search_units)에서, 키워드 검색은
+   원문(answer_units.content)에서 수행한다. 짧은 질문 문장은 담긴 키워드가 적어
+   키워드 검색이 빈약한데, 원문은 단어가 풍부해 키워드 매칭이 잘 걸린다.
+
+[비교 대상 — 전처럼 두 가지]
+  분리저장 혼합   : 벡터=search_units + 키워드=원문, RRF 결합   ← 개선안
+  원문직접검색    : 벡터·키워드 모두 원문, RRF 결합             ← 비교 기준
+  (두 방식 모두 동일한 질문형 정제 쿼리를 입력받는다 — 공정성 통제)
 
 공정성 통제:
 - 임베딩 모델 동일 (text-embedding-3-small, rag_search와 같은 인스턴스 재사용)
-- 하이브리드 로직 동일 (벡터 + Kiwi 키워드 + RRF — rag_search 함수 재사용)
-- 검색 입력 동일 (A/B 모두 같은 정제 질문. transform 결과는 파일 캐시)
-- 채점 규칙 동일 (doc_id 기준 첫 등장 순으로 접어 문서 단위 순위)
+- RRF 파라미터 동일 (k=30, 벡터:키워드 = 0.5:0.5 — 프로덕션과 동일)
+- 검색 입력 동일 (같은 질문형 정제 쿼리. LLM 정제 결과는 파일 캐시)
+- 채점 규칙 동일 (문서 계층 반영: 정답의 부모/자식 문서도 정답 인정)
 
 출력:
-- 콘솔: 모드×(전체/real/synthetic) 요약 표
-- eval_results.csv: 질문별 상세 (각 모드에서 정답이 몇 등이었는지) — 실패 사례 분석용
+- 콘솔: 방식×(전체/real/synthetic) 요약 표
+- eval_results.csv: 질문별 상세 (순위 + 실제 top-3 목록) — 실패 사례 분석용
 
 실행: python evaluate_search_split.py
-      (최초 실행 시 answer_content_vectors 테이블 생성 + 원문 임베딩에 몇 분 소요)
 """
 
 import os
@@ -32,27 +36,29 @@ import time
 from typing import Dict, List, Optional
 
 import psycopg2.extras
+from openai import OpenAI
 
 # 프로덕션 검색 코드를 그대로 재사용한다 — "평가한 것 = 실제 시스템"을 보장
 from rag_search import (
-    embeddings, get_connection, extract_keywords, build_tsquery,
-    vector_search, keyword_search, reciprocal_rank_fusion, search_units,
+    embeddings, get_connection, extract_keywords, build_tsquery, vector_search,
 )
-from query_transform import transform_user_query
 
 GOLDEN_PATH = "./golden_set.json"
 TRANSFORM_CACHE_PATH = "./eval_transform_cache.json"
 RESULTS_CSV_PATH = "./eval_results.csv"
 
 TOP_K = 10           # 이 순위까지 정답을 찾는다 (MRR 계산 범위)
-UNIT_POOL = 30       # 문서로 접기 전 가져올 검색 단위 수 (중복 접힘 대비 여유분)
+RRF_K = 30           # RRF 파라미터 (rag_search 프로덕션 기본값과 동일)
+VECTOR_WEIGHT = 0.5  # 벡터:키워드 가중치 (프로덕션 기본값과 동일)
 EMBED_BATCH = 50
 EMBED_SLEEP_SEC = 3
 CONTENT_EMBED_CHARS = 8000  # 임베딩 입력 안전 상한 (모델 한도 초과 방지)
 
+QUESTION_CLEAN_MODEL = "gpt-4o-mini"
+
 
 # ---------------------------------------------------------------------------
-# 1) 방식 B 준비 — 원문 직접 검색용 테이블 (비교 실험 전용)
+# 1) 원문 검색용 테이블 — 키워드(원문)와 원문직접검색 양쪽에서 사용
 # ---------------------------------------------------------------------------
 
 def setup_content_table(dim: int) -> None:
@@ -72,7 +78,7 @@ def setup_content_table(dim: int) -> None:
 
 
 def build_content_vectors() -> None:
-    """answer_units 원문을 임베딩해서 채운다. 이미 된 문서는 건너뛴다(증분)."""
+    """answer_units 원문을 임베딩·색인해서 채운다. 이미 된 문서는 건너뛴다(증분)."""
     dim = len(embeddings.embed_query("차원 확인"))
     setup_content_table(dim)
 
@@ -87,11 +93,11 @@ def build_content_vectors() -> None:
     """)
     todo = cur.fetchall()
     if not todo:
-        print("✅ 방식 B 테이블(answer_content_vectors) 준비 완료 (이미 구축됨)")
+        print("✅ 원문 검색 테이블(answer_content_vectors) 준비 완료 (이미 구축됨)")
         cur.close(); conn.close()
         return
 
-    print(f"🔨 방식 B 테이블 구축: 원문 {len(todo)}개 임베딩 (몇 분 걸릴 수 있음)")
+    print(f"🔨 원문 검색 테이블 구축: {len(todo)}개 임베딩 (몇 분 걸릴 수 있음)")
     for i in range(0, len(todo), EMBED_BATCH):
         batch = todo[i:i + EMBED_BATCH]
         vectors = embeddings.embed_documents([r["content"][:CONTENT_EMBED_CHARS] for r in batch])
@@ -109,101 +115,128 @@ def build_content_vectors() -> None:
     conn.close()
 
 
-def _content_vector_search(query: str, top_k: int = 20):
+def content_vector_docs(query: str, top_k: int = 20) -> List[str]:
+    """원문 벡터 검색 → 문서 순위"""
     qv = embeddings.embed_query(query)
     conn = get_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur = conn.cursor()
     cur.execute("""
-        SELECT doc_id AS id, doc_id, 'content' AS view_type, '' AS text,
-               1 - (embedding <=> %s::vector) AS similarity
-        FROM answer_content_vectors ORDER BY embedding <=> %s::vector LIMIT %s
-    """, (str(qv), str(qv), top_k))
-    rows = cur.fetchall()
+        SELECT doc_id FROM answer_content_vectors
+        ORDER BY embedding <=> %s::vector LIMIT %s
+    """, (str(qv), top_k))
+    docs = [r[0] for r in cur.fetchall()]
     cur.close(); conn.close()
-    return rows
+    return docs
 
 
-def _content_keyword_search(query: str, top_k: int = 20):
+def content_keyword_docs(query: str, top_k: int = 20) -> List[str]:
+    """원문 키워드 검색 → 문서 순위"""
     tsq = build_tsquery(extract_keywords(query))
     if not tsq:
         return []
     conn = get_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur = conn.cursor()
     cur.execute("""
-        SELECT doc_id AS id, doc_id, 'content' AS view_type, '' AS text,
-               ts_rank(text_tsv, to_tsquery('simple', %s)) AS rank
-        FROM answer_content_vectors WHERE text_tsv @@ to_tsquery('simple', %s)
-        ORDER BY rank DESC LIMIT %s
+        SELECT doc_id FROM answer_content_vectors
+        WHERE text_tsv @@ to_tsquery('simple', %s)
+        ORDER BY ts_rank(text_tsv, to_tsquery('simple', %s)) DESC LIMIT %s
     """, (tsq, tsq, top_k))
-    rows = cur.fetchall()
+    docs = [r[0] for r in cur.fetchall()]
     cur.close(); conn.close()
-    return rows
+    return docs
 
 
-def search_content(query: str) -> List[str]:
-    """방식 B: 원문 하이브리드 검색 → 문서 순위 (A와 동일한 RRF 로직 재사용)"""
-    fused = reciprocal_rank_fusion(
-        _content_vector_search(query), _content_keyword_search(query))
-    return [h.doc_id for h in fused][:TOP_K]  # 문서당 1행이라 중복 없음
-
-
-# ---------------------------------------------------------------------------
-# 2) 방식 A 검색 모드들 — 결과를 "문서 순위 리스트"로 통일
-# ---------------------------------------------------------------------------
-
-def _dedupe_docs(hits) -> List[str]:
-    """검색 단위 순위를 doc_id 첫 등장 순으로 접는다 (fetch_answer_units와 같은 규칙)"""
+def search_unit_vector_docs(query: str, top_k: int = 20) -> List[str]:
+    """search_units 벡터 검색 → 문서 순위 (같은 문서의 여러 문장은 첫 등장만)"""
+    rows = vector_search(query, top_k=top_k)  # 프로덕션 함수 재사용
     docs: List[str] = []
-    for h in hits:
-        if h.doc_id not in docs:
-            docs.append(h.doc_id)
-    return docs[:TOP_K]
-
-
-def search_a_single(query: str) -> List[str]:
-    """현행 방식: search_units 하이브리드 검색 1회"""
-    return _dedupe_docs(search_units(query, top_k=UNIT_POOL))
-
-
-def search_a_multi(queries: List[str]) -> List[str]:
-    """멀티쿼리: 변형 검색어별로 검색한 뒤 변형 간 RRF로 합산"""
-    scores: Dict[int, float] = {}
-    doc_of: Dict[int, str] = {}
-    for q in queries:
-        fused = reciprocal_rank_fusion(vector_search(q, 20), keyword_search(q, 20))
-        for rank, hit in enumerate(fused[:UNIT_POOL]):
-            scores[hit.id] = scores.get(hit.id, 0.0) + 1.0 / (60 + rank + 1)
-            doc_of[hit.id] = hit.doc_id
-    ranked_units = sorted(scores, key=lambda uid: scores[uid], reverse=True)
-    docs: List[str] = []
-    for uid in ranked_units:
-        if doc_of[uid] not in docs:
-            docs.append(doc_of[uid])
-    return docs[:TOP_K]
+    for r in rows:
+        if r["doc_id"] not in docs:
+            docs.append(r["doc_id"])
+    return docs
 
 
 # ---------------------------------------------------------------------------
-# 3) 질문 정제 캐시 — LLM 호출을 질문당 1회로
+# 2) 문서 단위 RRF 결합 — 두 검색의 문서 순위를 합친다
 # ---------------------------------------------------------------------------
 
-def load_transforms(golden: List[Dict]) -> Dict[str, Dict]:
+def rrf_docs(vec_docs: List[str], kw_docs: List[str],
+             k: int = RRF_K, vector_weight: float = VECTOR_WEIGHT) -> List[str]:
+    scores: Dict[str, float] = {}
+    for rank, d in enumerate(vec_docs):
+        scores[d] = scores.get(d, 0.0) + vector_weight * (1.0 / (k + rank + 1))
+    for rank, d in enumerate(kw_docs):
+        scores[d] = scores.get(d, 0.0) + (1 - vector_weight) * (1.0 / (k + rank + 1))
+    return sorted(scores, key=lambda d: scores[d], reverse=True)
+
+
+def search_split_mixed(query: str) -> List[str]:
+    """개선안: 벡터=search_units(질문형 문장) + 키워드=원문 → RRF 결합"""
+    return rrf_docs(search_unit_vector_docs(query), content_keyword_docs(query))[:TOP_K]
+
+
+def search_content_only(query: str) -> List[str]:
+    """비교 기준: 벡터·키워드 모두 원문 → RRF 결합"""
+    return rrf_docs(content_vector_docs(query), content_keyword_docs(query))[:TOP_K]
+
+
+# ---------------------------------------------------------------------------
+# 3) 질문형 정제 — 노이즈 제거하되 질문형 문장 유지 (결과는 파일 캐시)
+# ---------------------------------------------------------------------------
+
+QUESTION_CLEAN_PROMPT = """
+당신은 검색 쿼리 정제 도우미입니다. 사용자 질문에서 인사말, 이메일 주소, 서명,
+후속 대화("감사합니다", "해결했습니다" 등), 마스킹 토큰을 제거하고,
+핵심 의도 하나를 담은 자연스러운 한국어 질문 한 문장으로 정리하세요.
+
+중요: 키워드 나열("작업 생성 방법")로 바꾸지 말고, 사람이 묻는 질문형 문장
+("작업은 어떻게 만드나요?")을 유지하세요. 여러 주제가 섞여 있으면 가장 중심이
+되는 질문 하나만 남기세요.
+
+JSON으로만 응답: {"question": "정리된 질문 한 문장"}
+"""
+
+_client = None
+
+
+def to_question_form(raw: str) -> str:
+    global _client
+    if _client is None:
+        _client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    try:
+        res = _client.chat.completions.create(
+            model=QUESTION_CLEAN_MODEL,
+            messages=[
+                {"role": "system", "content": QUESTION_CLEAN_PROMPT.strip()},
+                {"role": "user", "content": f"사용자 질문: {raw}"},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.0,
+        )
+        q = json.loads(res.choices[0].message.content).get("question", "").strip()
+        return q or raw
+    except Exception:
+        return raw  # 정제 실패 시 원문으로 검색 (평가가 통째로 멈추지 않게)
+
+
+def load_question_queries(golden: List[Dict]) -> Dict[str, str]:
+    """sample_id → 질문형 정제 쿼리. 기존 캐시 파일에 'question' 키로 누적 저장."""
     cache: Dict[str, Dict] = {}
     if os.path.exists(TRANSFORM_CACHE_PATH):
         with open(TRANSFORM_CACHE_PATH, "r", encoding="utf-8") as f:
             cache = json.load(f)
 
-    todo = [g for g in golden if g["sample_id"] not in cache]
+    todo = [g for g in golden if "question" not in cache.get(g["sample_id"], {})]
     if todo:
-        print(f"🔄 질문 정제(query_transform): {len(todo)}개 (캐시됨 {len(cache)}개)")
+        print(f"🔄 질문형 정제: {len(todo)}개 (캐시됨 {len(golden) - len(todo)}개)")
     for i, g in enumerate(todo, 1):
-        t = transform_user_query(g["query"])
-        variants = [t.cleaned_query] + [q for q in t.search_queries if q != t.cleaned_query]
-        cache[g["sample_id"]] = {"cleaned": t.cleaned_query, "variants": variants[:3]}
+        entry = cache.setdefault(g["sample_id"], {})
+        entry["question"] = to_question_form(g["query"])
         with open(TRANSFORM_CACHE_PATH, "w", encoding="utf-8") as f:
             json.dump(cache, f, ensure_ascii=False, indent=2)  # 매번 저장 — 중단 후 재개 가능
         if i % 20 == 0:
             print(f"  → {i}/{len(todo)}")
-    return cache
+    return {g["sample_id"]: cache[g["sample_id"]]["question"] for g in golden}
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +248,6 @@ def is_correct(golden_doc_id: str, doc_id: str) -> bool:
 
     문서가 부모/자식 계층(guide/팀 ↔ guide/팀/개요)으로 나뉘어 있어서
     정답의 같은 가족 문서를 찾아와도 내용상 정답인 경우가 많다.
-    (실측: 완전일치 채점에서는 synthetic 실패 48건 중 14건이 이 유형이었다)
     """
     return (
         doc_id == golden_doc_id
@@ -256,20 +288,13 @@ class Scorer:
 # ---------------------------------------------------------------------------
 
 # 모드 이름은 결과표에 그대로 찍히므로 설명형으로 명시한다
-MODE_CURRENT = "분리저장+정제질문(현행)"     # search_units 하이브리드 검색, cleaned_query 사용
-MODE_MULTI   = "분리저장+멀티쿼리(실험)"     # 변형 검색어 2~3개로 각각 검색 후 RRF 합산
-MODE_RAW     = "분리저장+원질문(정제없이)"   # query_transform 없이 원질문 그대로 검색
-MODE_CONTENT = "원문직접검색(비교대상)"      # answer_units.content를 같은 하이브리드로 검색
+MODE_SPLIT = "분리저장혼합(벡터=질문문장+키워드=원문)"   # 개선안
+MODE_CONTENT = "원문직접검색(벡터·키워드=원문)"          # 비교 기준
 
-# 기본 실행: 1부 핵심 비교(A vs B)만.
-# `python evaluate_search_split.py full`로 실행하면 멀티쿼리·원질문 실험까지 포함
-#   (search_queries 처리를 정하는 팀 회의 안건용)
-MODES_BASIC = [MODE_CURRENT, MODE_CONTENT]
-MODES_FULL = [MODE_CURRENT, MODE_MULTI, MODE_RAW, MODE_CONTENT]
+MODES = [MODE_SPLIT, MODE_CONTENT]
 
 
-def main(full: bool = False) -> None:
-    modes = MODES_FULL if full else MODES_BASIC
+def main() -> None:
     if not os.path.exists(GOLDEN_PATH):
         raise RuntimeError(f"{GOLDEN_PATH}가 없습니다. golden_set_builder.py를 먼저 완료하세요.")
     with open(GOLDEN_PATH, "r", encoding="utf-8") as f:
@@ -278,27 +303,23 @@ def main(full: bool = False) -> None:
     print(f"✅ 골든셋 {len(golden)}개 로드 (real {n_real} / synthetic {len(golden) - n_real})")
 
     build_content_vectors()
-    transforms = load_transforms(golden)
+    questions = load_question_queries(golden)
 
-    # 모드 × (전체/real/synthetic) 채점기
-    scorers = {m: {"all": Scorer(), "real": Scorer(), "synthetic": Scorer()} for m in modes}
+    scorers = {m: {"all": Scorer(), "real": Scorer(), "synthetic": Scorer()} for m in MODES}
     detail_rows = []
 
-    print(f"\n🔍 검색 평가 실행: 질문 {len(golden)}개 × 검색 방식 {len(modes)}개")
+    print(f"\n🔍 검색 평가 실행: 질문 {len(golden)}개 × 검색 방식 {len(MODES)}개 (질문형 정제 쿼리 사용)")
     for i, g in enumerate(golden, 1):
-        t = transforms[g["sample_id"]]
+        q = questions[g["sample_id"]]
         results = {
-            MODE_CURRENT: search_a_single(t["cleaned"]),
-            MODE_CONTENT: search_content(t["cleaned"]),
+            MODE_SPLIT: search_split_mixed(q),
+            MODE_CONTENT: search_content_only(q),
         }
-        if full:
-            results[MODE_MULTI] = search_a_multi(t["variants"])
-            results[MODE_RAW] = search_a_single(g["query"])
         src = g.get("source", "real")
         row = {"sample_id": g["sample_id"], "source": src,
                "golden_doc_id": g["golden_doc_id"],
-               "query_preview": " ".join(g["query"].split())[:80]}
-        for m in modes:
+               "query_used": q[:80]}
+        for m in MODES:
             r = rank_of(g["golden_doc_id"], results[m])
             scorers[m]["all"].add(r)
             scorers[m][src].add(r)
@@ -308,40 +329,33 @@ def main(full: bool = False) -> None:
         if i % 20 == 0:
             print(f"  → {i}/{len(golden)}")
 
-    # 질문별 상세 로그 (실패 사례 분석용)
     with open(RESULTS_CSV_PATH, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(detail_rows[0].keys()))
         writer.writeheader()
         writer.writerows(detail_rows)
 
-    # 요약 표
-    print(f"\n{'=' * 80}")
-    print(f"{'검색 방식':<26} {'구분':<10} {'n':>4} {'Hit@1':>8} {'Hit@3':>8} {'MRR':>8}")
-    print("-" * 80)
-    for m in modes:
+    print(f"\n{'=' * 88}")
+    print(f"{'검색 방식':<34} {'구분':<10} {'n':>4} {'Hit@1':>8} {'Hit@3':>8} {'MRR':>8}")
+    print("-" * 88)
+    for m in MODES:
         for split in ("all", "real", "synthetic"):
             s = scorers[m][split].summary()
             if s["n"] == 0:
                 continue
-            print(f"{m:<26} {split:<10} {s['n']:>4} {s['hit@1']:>8.3f} {s['hit@3']:>8.3f} {s['mrr']:>8.3f}")
-        print("-" * 80)
+            print(f"{m:<34} {split:<10} {s['n']:>4} {s['hit@1']:>8.3f} {s['hit@3']:>8.3f} {s['mrr']:>8.3f}")
+        print("-" * 88)
 
     print(f"""
 [해석 가이드]
-- 1부 핵심: '{MODE_CURRENT}' vs '{MODE_CONTENT}'
-  → 현행이 높으면 "저장소를 둘로 나눈 설계가 효과 있다" 증명 (대표 숫자는 real 기준)""")
-    if full:
-        print(f"""- 회의 안건: '{MODE_MULTI}' vs '{MODE_CURRENT}'
-  → 멀티쿼리가 Hit@3 +3%p 이상이면 구현, ±3%p 이내면 현행 유지 + 생성 제거, 하락이면 제거
-- 보너스: '{MODE_RAW}' vs '{MODE_CURRENT}'
-  → 현행이 높으면 query_transform 정제 단계가 검색에 기여하고 있다는 뜻""")
-    else:
-        print("- 멀티쿼리·원질문 실험까지 보려면: python evaluate_search_split.py full")
-    print(f"""- 질문별 상세: {RESULTS_CSV_PATH} (어떤 질문에서 어떤 방식이 무너지는지 확인)
+- 비교: '{MODE_SPLIT}' vs '{MODE_CONTENT}'
+  → 개선안이 높으면 "질문형 정제 + 혼합 하이브리드(벡터는 질문문장, 키워드는 원문)"가
+    저장소 분리 설계의 올바른 활용법이라는 증거 (대표 숫자는 real 기준)
+- 이전 라운드(키워드체 정제, 벡터·키워드 모두 같은 저장소)와 비교하면
+  질문형 정제의 효과도 가늠 가능 — 이전: 현행 real Hit@3=0.448 / 원문직접 0.241
+- 질문별 상세: {RESULTS_CSV_PATH} (query_used 열에서 정제된 쿼리도 확인)
 - 주의: 점수 차이가 근소하면(±3%p) 표본 크기 한계로 단정하지 말 것
 """)
 
 
 if __name__ == "__main__":
-    import sys
-    main(full=(len(sys.argv) > 1 and sys.argv[1] == "full"))
+    main()
