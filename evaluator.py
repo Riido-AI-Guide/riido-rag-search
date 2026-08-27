@@ -7,6 +7,15 @@ from openai import OpenAI
 from dto import AnswerEvaluation
 
 
+class EvaluationError(RuntimeError):
+    """
+    평가 실패.
+
+    실패 시 0.0을 반환하면 이 시스템에서 "완전한 환각" 판정과 값이 같아진다.
+    평가가 죽은 것과 답변이 나쁜 것을 구분하려면 예외로 올려야 한다.
+    """
+
+
 def evaluate_faithfulness(
     question: str,
     context_documents: List[str],
@@ -74,24 +83,21 @@ def evaluate_faithfulness(
             response_format={"type": "json_object"},
             temperature=0.0  # 일관된 평가를 위해 0으로 설정
         )
+    except Exception as e:
+        raise EvaluationError(f"평가 호출 실패: {e}") from e
 
-        res_json = json.loads(response.choices[0].message.content)
-        
+    try:
+        res_json = json.loads(response.choices[0].message.content or "")
+    except (TypeError, json.JSONDecodeError) as e:
+        raise EvaluationError(f"평가 응답을 JSON으로 해석할 수 없습니다: {e}") from e
+
+    # 점수 키가 빠졌을 때 0.0으로 채우면 환각 판정과 구분되지 않으므로 필수로 요구한다
+    try:
         return AnswerEvaluation(
-            faithfulness=float(res_json.get("faithfulness", 0.0)),
-            answer_relevance=float(res_json.get("answer_relevance", 0.0)),
-            context_relevance=float(res_json.get("context_relevance", 0.0)),
+            faithfulness=float(res_json["faithfulness"]),
+            answer_relevance=float(res_json["answer_relevance"]),
+            context_relevance=float(res_json["context_relevance"]),
             reason=res_json.get("reason", "평가 완료")
         )
-
-    except Exception as e:
-        # 평가 실패는 "환각 답변(0점)"과 다르다. error=True로 구분해서 돌려주고,
-        # 평균 등 점수 집계에서는 error=True인 결과를 반드시 제외해야 한다.
-        # (0.0으로 섞으면 API 오류 몇 건이 전체 평균을 끌어내린다)
-        return AnswerEvaluation(
-            faithfulness=0.0,
-            answer_relevance=0.0,
-            context_relevance=0.0,
-            reason=f"평가 프로세스 중 오류 발생: {str(e)}",
-            error=True,
-        )
+    except (KeyError, TypeError, ValueError) as e:
+        raise EvaluationError(f"평가 응답 형식이 올바르지 않습니다: {e}") from e
