@@ -8,31 +8,17 @@ rag_search.py — 검색 모듈
 - 임베딩: OpenAI text-embedding-3-small
 """
 
-import os
 import re
 from typing import Dict, List
 
-import psycopg2
-import psycopg2.extras
-from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
 from kiwipiepy import Kiwi
 
+from db import get_cursor
 from dto import RetrievedChunk, SearchHit
-
-load_dotenv()
-
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "dbname=riido user=postgres password=postgres host=localhost port=5432",
-)
 
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 kiwi = Kiwi()
-
-
-def get_connection():
-    return psycopg2.connect(DATABASE_URL)
 
 
 def extract_keywords(text: str) -> str:
@@ -68,18 +54,17 @@ def build_tsquery(keywords: str) -> str:
 # ---------------------------------------------------------------------------
 
 def vector_search(query: str, top_k: int = 20):
+    # 임베딩(외부 API 호출)을 끝낸 뒤에 커넥션을 빌린다.
+    # 반대로 하면 네트워크 대기 동안 풀 커넥션을 붙잡고 있게 된다.
     query_vector = embeddings.embed_query(query)
-    conn = get_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    cur.execute("""
-        SELECT id, doc_id, view_type, text,
-               1 - (embedding <=> %s::vector) AS similarity
-        FROM search_units ORDER BY embedding <=> %s::vector LIMIT %s
-    """, (str(query_vector), str(query_vector), top_k))
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    return rows
+
+    with get_cursor() as cur:
+        cur.execute("""
+            SELECT id, doc_id, view_type, text,
+                   1 - (embedding <=> %s::vector) AS similarity
+            FROM search_units ORDER BY embedding <=> %s::vector LIMIT %s
+        """, (str(query_vector), str(query_vector), top_k))
+        return cur.fetchall()
 
 
 def keyword_search(query: str, top_k: int = 20):
@@ -87,18 +72,14 @@ def keyword_search(query: str, top_k: int = 20):
     if not tsquery:  # 명사·동사·형용사가 하나도 안 나온 질문
         return []
 
-    conn = get_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    cur.execute("""
-        SELECT id, doc_id, view_type, text,
-               ts_rank(text_tsv, to_tsquery('simple', %s)) AS rank
-        FROM search_units WHERE text_tsv @@ to_tsquery('simple', %s)
-        ORDER BY rank DESC LIMIT %s
-    """, (tsquery, tsquery, top_k))
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    return rows
+    with get_cursor() as cur:
+        cur.execute("""
+            SELECT id, doc_id, view_type, text,
+                   ts_rank(text_tsv, to_tsquery('simple', %s)) AS rank
+            FROM search_units WHERE text_tsv @@ to_tsquery('simple', %s)
+            ORDER BY rank DESC LIMIT %s
+        """, (tsquery, tsquery, top_k))
+        return cur.fetchall()
 
 
 def reciprocal_rank_fusion(vector_results, keyword_results, k: int = 30, vector_weight: float = 0.5):
@@ -159,15 +140,12 @@ def fetch_answer_units(hits: List[SearchHit]) -> List[RetrievedChunk]:
         if hit.doc_id not in ordered_doc_ids:
             ordered_doc_ids.append(hit.doc_id)
 
-    conn = get_connection()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    cur.execute("""
-        SELECT doc_id, title, section, source_type, content, ord_idx
-        FROM answer_units WHERE doc_id = ANY(%s)
-    """, (ordered_doc_ids,))
-    rows = {row["doc_id"]: row for row in cur.fetchall()}
-    cur.close()
-    conn.close()
+    with get_cursor() as cur:
+        cur.execute("""
+            SELECT doc_id, title, section, source_type, content, ord_idx
+            FROM answer_units WHERE doc_id = ANY(%s)
+        """, (ordered_doc_ids,))
+        rows = {row["doc_id"]: row for row in cur.fetchall()}
 
     docs: List[RetrievedChunk] = []
     for doc_id in ordered_doc_ids:
