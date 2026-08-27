@@ -58,31 +58,21 @@ class EvaluationOut(BaseModel):
         )
 
 
-class AskRequest(SearchOptions):
+class AskRequest(BaseModel):
+    """질문만 받는다. top_k·vector_weight 등 검색 파라미터는 서버 기본값(Settings)을 쓴다"""
     query: str = Field(min_length=1, max_length=1000, examples=["팀원을 어떻게 추가해?"])
-
-    include_documents: bool = Field(default=True, description="근거 문서 본문 포함 여부 (false면 doc_id만)")
-    include_hits: bool = Field(default=False, description="검색 문장과 점수 포함 여부")
-    evaluate: bool = Field(
-        default=False,
-        description="LLM-as-a-Judge 평가 수행 여부. true면 LLM 호출이 1회 더 늘어난다",
-    )
 
 
 class AskResponse(BaseModel):
     raw_query: str = Field(description="사용자가 보낸 원문")
     cleaned_query: str = Field(description="query_transform이 정제한 검색어")
-    search_queries: List[str] = Field(description="생성된 변형 검색어 (현재 검색에는 미사용)")
     needs_search: bool = Field(description="false면 검색·생성을 건너뛴다")
 
     answer: str
     doc_ids: List[str] = Field(description="답변의 근거가 된 answer_units 식별자")
 
-    documents: Optional[List[AnswerUnitOut]] = None
-    hits: Optional[List[SearchHitOut]] = None
-    evaluation: Optional[EvaluationOut] = Field(
-        default=None,
-        description="evaluate=true여도 평가 호출이 실패하면 null이다 (0.0으로 채우면 환각 판정과 구분되지 않음)",
+    documents: List[AnswerUnitOut] = Field(
+        default_factory=list, description="근거 문서 본문. 항상 포함한다"
     )
 
 

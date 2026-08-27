@@ -24,7 +24,6 @@ NO_SEARCH_MESSAGE = "안녕하세요! 뤼이도 이용 가이드에 대해 궁�
 class AskResult:
     raw_query: str
     cleaned_query: str
-    search_queries: List[str]
     needs_search: bool
     answer: str
     documents: List[RetrievedChunk] = field(default_factory=list)
@@ -50,7 +49,6 @@ def ask(
         return AskResult(
             raw_query=query,
             cleaned_query=transformed.cleaned_query,
-            search_queries=transformed.search_queries,
             needs_search=False,
             answer=NO_SEARCH_MESSAGE,
         )
@@ -78,7 +76,6 @@ def ask(
     return AskResult(
         raw_query=query,
         cleaned_query=transformed.cleaned_query,
-        search_queries=transformed.search_queries,
         needs_search=True,
         answer=answer.message,
         documents=documents,

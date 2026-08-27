@@ -12,7 +12,6 @@ from api.deps import resolve_search_params
 from api.schemas.chat import (
     AskRequest,
     AskResponse,
-    EvaluationOut,
     SearchHitOut,
     SearchRequest,
     SearchResponse,
@@ -27,32 +26,24 @@ router = APIRouter(tags=["chat"])
     "/ask",
     response_model=AskResponse,
     summary="질문에 대한 답변과 근거 문서 id 반환",
-    description="질문 정제 → 하이브리드 검색 → 답변 생성 → (선택) 환각 평가",
+    description="질문 정제 → 하이브리드 검색 → 답변 생성. 근거 문서는 항상 함께 반환한다.",
 )
 def ask(req: AskRequest, settings: Settings = Depends(get_settings)) -> AskResponse:
-    top_k, vector_weight = resolve_search_params(req.top_k, req.vector_weight, settings)
-
+    # 요청은 query만 받는다. 검색 파라미터는 서버 기본값을 쓰고, 평가는 하지 않는다.
     # LlmError는 api/main.py의 예외 핸들러가 502로 변환한다
     result = rag_service.ask(
-        query=req.query, top_k=top_k, vector_weight=vector_weight, evaluate=req.evaluate
+        query=req.query,
+        top_k=settings.default_top_k,
+        vector_weight=settings.default_vector_weight,
     )
 
     return AskResponse(
         raw_query=result.raw_query,
         cleaned_query=result.cleaned_query,
-        search_queries=result.search_queries,
         needs_search=result.needs_search,
         answer=result.answer,
         doc_ids=result.doc_ids,
-        documents=(
-            [AnswerUnitOut.from_domain(d) for d in result.documents]
-            if req.include_documents else None
-        ),
-        hits=(
-            [SearchHitOut.from_domain(h) for h in result.hits]
-            if req.include_hits else None
-        ),
-        evaluation=EvaluationOut.from_domain(result.evaluation) if result.evaluation else None,
+        documents=[AnswerUnitOut.from_domain(d) for d in result.documents],
     )
 
 

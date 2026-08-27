@@ -47,28 +47,23 @@ api/
 
 ### POST /api/v1/ask
 
+요청 본문은 `query` 하나뿐이다. `top_k`·`vector_weight`는 서버 기본값(`Settings`)을 쓰고,
+근거 문서는 항상 포함하며, 환각 평가는 하지 않는다.
+
 ```jsonc
 // 요청
 {
-  "query": "팀원을 어떻게 추가해?",
-  "top_k": 3,                 // 선택, 기본 5 (상한 20)
-  "vector_weight": 0.5,       // 선택, 1.0=벡터만 0.0=키워드만
-  "include_documents": true,  // 근거 문서 본문 포함 (false면 doc_id만)
-  "include_hits": false,      // 검색 문장·점수 포함 (튜닝용)
-  "evaluate": false           // 환각 평가 (LLM 1회 추가)
+  "query": "팀원을 어떻게 추가해?"
 }
 
 // 응답
 {
   "raw_query": "팀원을 어떻게 추가해?",
   "cleaned_query": "팀원 추가 방법",
-  "search_queries": ["팀원 추가 방법", "멤버 초대"],
   "needs_search": true,
   "answer": "...",
   "doc_ids": ["guide/멤버", "guide/멤버/권한"],
-  "documents": [...],  // include_documents=false면 null
-  "hits": null,
-  "evaluation": null
+  "documents": [...]
 }
 ```
 
@@ -125,4 +120,4 @@ api/
 | `GET /answer-units/orphans` — 검색 문장이 없는 문서 | `search_units`가 하나도 안 달린 `answer_units`는 영원히 검색되지 않는다. 인덱스 품질 점검용 |
 | `POST /admin/reindex` — 인덱스 재빌드 트리거 | 지금은 서버에 SSH로 들어가 스크립트를 돌려야 한다. 다만 수 분 걸리는 작업이라 BackgroundTasks나 작업 큐가 필요하고, 인증도 있어야 한다 |
 | `GET /ask/stream` — 답변 토큰 스트리밍 | `/ask`는 LLM 2~3회 + 임베딩 1회라 체감 지연이 크다. SSE로 답변을 흘려보내면 개선된다. `llm.py`가 `stream=True`를 지원하도록 바뀌어야 한다 |
-| 평가를 백그라운드로 | `evaluate=true`면 응답이 LLM 1회만큼 더 느려진다. 응답은 먼저 주고 평가는 `BackgroundTasks`로 돌려 로그에만 남기는 편이 사용자 경험에 낫다 |
+| 평가를 백그라운드로 | 환각 평가는 LLM 1회가 더 들어 `/ask`에서 뺐다. `rag_service.ask(evaluate=True)` 경로는 남아 있으니, 응답은 먼저 주고 평가는 `BackgroundTasks`로 돌려 로그에만 남기면 된다 |

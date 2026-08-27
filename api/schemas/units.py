@@ -17,19 +17,16 @@ class AnswerUnitOut(BaseModel):
     source_type: str = Field(examples=["guide"])
     ord_idx: int = Field(description="원문 등장 순서")
     content: Optional[str] = Field(default=None, description="본문. include_content=false면 생략")
-    content_length: int = Field(description="본문 길이(자)")
 
     @classmethod
     def from_row(cls, row: Dict[str, Any], include_content: bool = True) -> "AnswerUnitOut":
-        content = row["content"]
         return cls(
             doc_id=row["doc_id"],
             title=row["title"],
             section=row["section"],
             source_type=row["source_type"],
             ord_idx=row["ord_idx"],
-            content=content if include_content else None,
-            content_length=len(content),
+            content=row["content"] if include_content else None,
         )
 
     @classmethod
@@ -42,7 +39,6 @@ class AnswerUnitOut(BaseModel):
             source_type=chunk.source_type,
             ord_idx=chunk.ord_idx,
             content=chunk.content if include_content else None,
-            content_length=len(chunk.content),
         )
 
 
