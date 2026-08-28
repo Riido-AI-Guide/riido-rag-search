@@ -14,11 +14,11 @@ class Answer:
 
     @property
     def message(self) -> str:
-        """평가·복사·로깅용 평문. sections가 없으면 raw를 그대로 준다."""
+        """평가·복사·로깅용 평문(마크다운). sections가 없으면 raw를 그대로 준다."""
         if not self.sections:
             return self.raw
         return "\n\n".join(
-            f"{s.label}\n{s.text}" if s.label else s.text
+            f"**{s.label}**  \n{s.text}" if s.label else s.text
             for s in self.sections
         )
 
