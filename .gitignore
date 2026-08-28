@@ -4,3 +4,11 @@ venv/
 __pycache__/
 *.pyc
 .vscode/
+.DS_Store
+**/.DS_Store
+
+# 평가 캐시·재생성 가능한 산출물
+golden_labels_draft.json
+eval_transform_cache.json
+eval_results.csv
+_to_delete/
