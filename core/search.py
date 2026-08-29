@@ -101,8 +101,8 @@ def content_keyword_search(query: str, top_k: int = 20):
             """, (tsquery, tsquery, top_k))
             return cur.fetchall()
     except psycopg2.errors.UndefinedTable:
-        # 원문 인덱스가 아직 없으면 벡터 검색만으로 동작 (search_builder.py 실행 필요)
-        print("⚠️  answer_content_vectors 없음 — search_builder.py를 실행해 원문 인덱스를 구축하세요")
+        # 원문 인덱스가 아직 없으면 벡터 검색만으로 동작 (build_search_units 실행 필요)
+        print("⚠️  answer_content_vectors 없음 — python -m scripts.build_search_units로 원문 인덱스를 구축하세요")
         return []
 
 

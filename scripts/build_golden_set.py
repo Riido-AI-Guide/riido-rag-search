@@ -1,5 +1,5 @@
 """
-golden_set_builder.py — 검색 평가용 골든셋(질문-정답 문서 쌍) 만들기
+scripts/build_golden_set.py — 검색 평가용 골든셋(질문-정답 문서 쌍) 만들기
 
 재료:
 - 질문: qa_reviewed_20260804.json (실제 고객 상담 100건, 마스킹·수기검수 완료)
@@ -8,14 +8,14 @@ golden_set_builder.py — 검색 평가용 골든셋(질문-정답 문서 쌍) �
 
 흐름 (2단계):
 1) propose  — LLM이 상담 질문마다 정답 문서 후보를 제안 → 검수용 CSV 출력
-              python golden_set_builder.py propose
+              python -m scripts.build_golden_set propose
 2) (사람)   — golden_labels_review.csv를 열어 '검수' 열만 채운다
               비워둠 = 제안 그대로 승인 / doc_id 입력 = 정답 교체 / "제외" = 골든셋에서 뺌
 3) finalize — 검수 반영해서 golden_set.json 확정 (source="real")
-              python golden_set_builder.py finalize
+              python -m scripts.build_golden_set finalize
 4) synthesize — 상담 질문이 커버하지 못한 문서들에 대해 원문에서
               고객 말투 질문을 생성해 골든셋에 보충 (source="synthetic")
-              python golden_set_builder.py synthesize
+              python -m scripts.build_golden_set synthesize
 
 실사용(real)과 합성(synthetic)을 태그로 구분해두므로 평가 때 두 셋의
 점수를 따로 볼 수 있다. 대표 숫자는 real, 문서 커버리지 확인은 synthetic.
@@ -75,7 +75,7 @@ def fetch_doc_catalog() -> List[Dict]:
     cur.close()
     conn.close()
     if not rows:
-        raise RuntimeError("answer_units가 비어 있습니다. answer_builder.py를 먼저 실행하세요.")
+        raise RuntimeError("answer_units가 비어 있습니다. python -m scripts.build_answer_units를 먼저 실행하세요.")
     return rows
 
 
@@ -219,7 +219,7 @@ def run_propose() -> None:
     print(f"   답변가능 후보 {n_answerable}개 / 제외 후보 {len(rows) - n_answerable}개")
     print("   → 엑셀로 열어 '검수' 열만 채우세요:")
     print("     비워둠 = 제안 승인 / 다른 doc_id 입력 = 정답 교체 / '제외' = 골든셋에서 뺌")
-    print("   → 끝나면: python golden_set_builder.py finalize")
+    print("   → 끝나면: python -m scripts.build_golden_set finalize")
 
 
 # ---------------------------------------------------------------------------
@@ -417,12 +417,12 @@ if __name__ == "__main__":
     if mode == "propose":
         run_propose()
     elif mode == "finalize":
-        # 문서당 최대 질문 수. 예: python golden_set_builder.py finalize 5 / 제한 없애려면 0
+        # 문서당 최대 질문 수. 예: python -m scripts.build_golden_set finalize 5 / 제한 없애려면 0
         cap = int(sys.argv[2]) if len(sys.argv) > 2 else 3
         run_finalize(max_per_doc=cap)
     elif mode == "synthesize":
-        # 문서당 생성할 질문 수. 예: python golden_set_builder.py synthesize 2
+        # 문서당 생성할 질문 수. 예: python -m scripts.build_golden_set synthesize 2
         n = int(sys.argv[2]) if len(sys.argv) > 2 else 1
         run_synthesize(per_doc=n)
     else:
-        print("사용법: python golden_set_builder.py [propose|finalize [문서당_최대]|synthesize [문서당_생성수]]")
+        print("사용법: python -m scripts.build_golden_set [propose|finalize [문서당_최대]|synthesize [문서당_생성수]]")

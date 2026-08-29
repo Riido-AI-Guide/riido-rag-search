@@ -1,5 +1,5 @@
 """
-answer_builder.py — 답변용 테이블(answer_units) 빌드
+scripts/build_answer_units.py — 답변용 테이블(answer_units) 빌드
 
 이용가이드(llms-full.txt)를 LLM 재작성 없이 원문 그대로 답변 단위로 적재한다.
 - 답변 단위 = H2 섹션 전체 (문자 수로 자르지 않음)

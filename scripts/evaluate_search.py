@@ -1,5 +1,5 @@
 """
-evaluate_search_split.py — 검색 평가 본체 (2차: 혼합 하이브리드 개선안 검증)
+scripts/evaluate_search.py — 검색 평가 본체 (2차: 혼합 하이브리드 개선안 검증)
 
 golden_set.json(질문 → 정답 doc_id)으로 검색 품질을 Hit@1 / Hit@3 / MRR로 채점한다.
 
@@ -26,7 +26,7 @@ golden_set.json(질문 → 정답 doc_id)으로 검색 품질을 Hit@1 / Hit@3 /
 - 콘솔: 방식×(전체/real/synthetic) 요약 표
 - eval_results.csv: 질문별 상세 (순위 + 실제 top-3 목록) — 실패 사례 분석용
 
-실행: python evaluate_search_split.py
+실행: python -m scripts.evaluate_search
 """
 
 import os
@@ -300,7 +300,7 @@ MODES = [MODE_SPLIT, MODE_CONTENT]
 
 def main() -> None:
     if not os.path.exists(GOLDEN_PATH):
-        raise RuntimeError(f"{GOLDEN_PATH}가 없습니다. golden_set_builder.py를 먼저 완료하세요.")
+        raise RuntimeError(f"{GOLDEN_PATH}가 없습니다. python -m scripts.build_golden_set을 먼저 완료하세요.")
     with open(GOLDEN_PATH, "r", encoding="utf-8") as f:
         golden = json.load(f)
     n_real = sum(1 for g in golden if g.get("source") == "real")

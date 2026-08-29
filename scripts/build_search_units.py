@@ -1,5 +1,5 @@
 """
-search_builder.py — 검색용 테이블(search_units) 빌드
+scripts/build_search_units.py — 검색용 테이블(search_units) 빌드
 
 rag_view_sentences.json(가설질문·실제질문·맥락요약 문장)을 검색 단위로 적재한다.
 - 문장 1개 = 검색 단위 1행. 답변 본문은 answer_units에 있고 여기엔 doc_id만 둔다.
@@ -20,7 +20,7 @@ from langchain_openai import OpenAIEmbeddings
 from kiwipiepy import Kiwi
 
 from domain import SearchChunk
-from answer_builder import setup_answer_table
+from scripts.build_answer_units import setup_answer_table
 
 load_dotenv()
 
@@ -202,7 +202,7 @@ def build_search_units(json_path: str = VIEW_SENTENCES_PATH) -> None:
     known_doc_ids = fetch_known_doc_ids()
     if not known_doc_ids:
         raise RuntimeError(
-            "answer_units가 비어 있습니다. answer_builder.py를 먼저 실행하세요."
+            "answer_units가 비어 있습니다. python -m scripts.build_answer_units를 먼저 실행하세요."
         )
 
     orphans = [c for c in chunks if c.doc_id not in known_doc_ids]
@@ -245,7 +245,7 @@ def print_stats() -> None:
 # ---------------------------------------------------------------------------
 # 원문 키워드·벡터 인덱스 (answer_content_vectors)
 #   분리혼합 검색의 키워드 검색 대상. rag_search.content_keyword_search가 사용한다.
-#   (2차 평가 evaluate_search_split.py에서 검증된 구조를 정식 편입)
+#   (2차 평가 scripts/evaluate_search.py에서 검증된 구조를 정식 편입)
 # ---------------------------------------------------------------------------
 
 CONTENT_EMBED_CHARS = 8000  # 임베딩 입력 안전 상한 (모델 한도 초과 방지)
@@ -271,7 +271,7 @@ def build_content_vectors() -> None:
     """answer_units 원문을 임베딩·색인해서 채운다. 이미 된 문서는 건너뛴다(증분).
 
     주의: 원문 content가 수정된 문서는 자동 갱신되지 않는다.
-    answer_builder가 변경 doc_id를 반환하므로, 대량 수정 시에는 해당 doc_id 행을
+    build_answer_units가 변경 doc_id를 반환하므로, 대량 수정 시에는 해당 doc_id 행을
     지우고 다시 실행하면 된다 (삭제된 문서는 FK CASCADE로 자동 정리).
     """
     dim = len(embeddings.embed_query("차원 확인"))

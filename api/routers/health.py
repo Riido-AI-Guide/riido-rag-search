@@ -23,7 +23,7 @@ def health() -> HealthResponse:
     empty = [s.table for s in statuses if s.exists and s.rows == 0]
 
     if missing or empty:
-        hint = "answer_builder.py → search_builder.py 순으로 실행해 인덱스를 만드세요."
+        hint = "python -m scripts.build_answer_units → python -m scripts.build_search_units 순으로 실행해 인덱스를 만드세요."
         if missing:
             hint = f"테이블 없음: {', '.join(missing)}. " + hint
         elif empty:
