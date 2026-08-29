@@ -36,6 +36,8 @@ import psycopg2.extras
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from scripts.paths import DATA_DIR
+
 load_dotenv()
 
 DATABASE_URL = os.getenv(
@@ -43,10 +45,10 @@ DATABASE_URL = os.getenv(
     "dbname=riido user=postgres password=postgres host=localhost port=5432",
 )
 
-QA_PATH = "./qa_reviewed_20260804.json"
-DRAFT_PATH = "./golden_labels_draft.json"     # LLM 제안 캐시
-REVIEW_PATH = "./golden_labels_review.csv"    # 사람이 검수하는 파일
-GOLDEN_PATH = "./golden_set.json"             # 최종 골든셋
+QA_PATH = DATA_DIR / "qa_reviewed_20260804.json"
+DRAFT_PATH = DATA_DIR / "golden_labels_draft.json"     # LLM 제안 캐시
+REVIEW_PATH = DATA_DIR / "golden_labels_review.csv"    # 사람이 검수하는 파일
+GOLDEN_PATH = DATA_DIR / "golden_set.json"             # 최종 골든셋
 
 LABEL_MODEL = os.getenv("GOLDEN_LABEL_MODEL", "gpt-4o")
 ANSWER_SNIPPET_CHARS = 1500  # 상담 답변은 앞부분만 잘라서 프롬프트에 넣는다
@@ -320,7 +322,7 @@ def run_finalize(max_per_doc: int = 3) -> None:
 # 3) synthesize — 상담이 커버하지 못한 문서에 대해 원문에서 질문 생성
 # ---------------------------------------------------------------------------
 
-VIEW_SENTENCES_PATH = "./rag_view_sentences.json"
+VIEW_SENTENCES_PATH = DATA_DIR / "rag_view_sentences.json"
 DOC_CONTENT_CHARS = 2000  # 문서 원문은 앞부분만 프롬프트에 넣는다
 
 SYNTH_SYSTEM_PROMPT = """

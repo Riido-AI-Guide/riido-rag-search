@@ -41,15 +41,16 @@ from openai import OpenAI
 # 프로덕션 검색 코드를 그대로 재사용한다 — "평가한 것 = 실제 시스템"을 보장
 from core.db import DATABASE_URL
 from core.search import embeddings, extract_keywords, build_tsquery, vector_search
+from scripts.paths import DATA_DIR
 
 
 def get_connection():
     """평가 스크립트 전용 단순 커넥션 (프로덕션은 db.py 풀 사용)"""
     return psycopg2.connect(DATABASE_URL)
 
-GOLDEN_PATH = "./golden_set.json"
-TRANSFORM_CACHE_PATH = "./eval_transform_cache.json"
-RESULTS_CSV_PATH = "./eval_results.csv"
+GOLDEN_PATH = DATA_DIR / "golden_set.json"
+TRANSFORM_CACHE_PATH = DATA_DIR / "eval_transform_cache.json"
+RESULTS_CSV_PATH = DATA_DIR / "eval_results.csv"
 
 TOP_K = 10           # 이 순위까지 정답을 찾는다 (MRR 계산 범위)
 RRF_K = 30           # RRF 파라미터 (rag_search 프로덕션 기본값과 동일)

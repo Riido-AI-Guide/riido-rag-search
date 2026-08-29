@@ -11,6 +11,7 @@ rag_view_sentences.json(가설질문·실제질문·맥락요약 문장)을 검�
 import os
 import json
 import time
+from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
 import psycopg2
@@ -20,6 +21,7 @@ from langchain_openai import OpenAIEmbeddings
 from kiwipiepy import Kiwi
 
 from domain import SearchChunk
+from scripts.paths import DATA_DIR
 from scripts.build_answer_units import setup_answer_table
 
 load_dotenv()
@@ -29,7 +31,7 @@ DATABASE_URL = os.getenv(
     "dbname=riido user=postgres password=postgres host=localhost port=5432",
 )
 
-VIEW_SENTENCES_PATH = "./rag_view_sentences.json"
+VIEW_SENTENCES_PATH = DATA_DIR / "rag_view_sentences.json"
 EMBED_BATCH_SIZE = 90
 EMBED_SLEEP_SEC = 5
 
@@ -84,7 +86,7 @@ def setup_search_table(embedding_dim: int) -> None:
 # 2) JSON 로드
 # ---------------------------------------------------------------------------
 
-def load_view_sentences(json_path: str = VIEW_SENTENCES_PATH) -> List[SearchChunk]:
+def load_view_sentences(json_path: Path = VIEW_SENTENCES_PATH) -> List[SearchChunk]:
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -192,7 +194,7 @@ def prune_removed(keep_keys: Set[Tuple[str, str]]) -> int:
 # 4) 오케스트레이션
 # ---------------------------------------------------------------------------
 
-def build_search_units(json_path: str = VIEW_SENTENCES_PATH) -> None:
+def build_search_units(json_path: Path = VIEW_SENTENCES_PATH) -> None:
     sample_vector = embeddings.embed_query("테스트")
     setup_search_table(embedding_dim=len(sample_vector))
 
