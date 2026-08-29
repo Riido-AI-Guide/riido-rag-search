@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from domain import AnswerEvaluation, ConversationTurn, RetrievedChunk, SearchHit
+from domain import AnswerEvaluation, ConversationTurn, RetrievedChunk
 from core.evaluation import EvaluationError, evaluate_faithfulness
 from core.generation import generate_rag_answer
 from core.query_transform import generate_conversation_title, transform_user_query
@@ -28,7 +28,6 @@ class AskResult:
     needs_search: bool
     answer: str
     documents: List[RetrievedChunk] = field(default_factory=list)
-    hits: List[SearchHit] = field(default_factory=list)
     evaluation: Optional[AnswerEvaluation] = None
 
     # 대화 맥락 — 답변 생성에는 쓰지 않고 응답·로그에 그대로 실어 보낸다
@@ -88,7 +87,8 @@ def ask(
         )
 
     # 검색과 생성에는 재작성(전처리)된 질문만 넘긴다. -> 이후 단계는 단일턴과 동일
-    hits, documents = rag_search(
+    # hits(문장 단위 점수)는 응답에 싣지 않는다 — 근거는 문서 단위로만 준다
+    _, documents = rag_search(
         transformed.cleaned_query, top_k=top_k, vector_weight=vector_weight
     )
 
@@ -113,16 +113,8 @@ def ask(
         needs_search=True,
         answer=answer.message,
         documents=documents,
-        hits=hits,
         evaluation=evaluation,
         conversation_id=conversation_id,
         history_turns_used=len(recent_history),
         title=transformed.conversation_title,
     )
-
-
-def search_only(query: str, top_k: int, vector_weight: float, transform: bool = False):
-    """답변 생성 없이 검색만. (사용한 검색어, hits, documents)"""
-    search_query = transform_user_query(query).cleaned_query if transform else query
-    hits, documents = rag_search(search_query, top_k=top_k, vector_weight=vector_weight)
-    return search_query, hits, documents

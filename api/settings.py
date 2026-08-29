@@ -29,7 +29,6 @@ class Settings(BaseSettings):
     # 검색 기본값
     default_top_k: int = 5
     default_vector_weight: float = 0.5
-    max_top_k: int = 20
 
     # 목록 API 페이지 크기 상한
     default_page_size: int = 50

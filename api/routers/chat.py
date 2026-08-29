@@ -1,18 +1,11 @@
 """
-api/routers/chat.py — 질의응답 및 검색 전용 엔드포인트
+api/routers/chat.py — 질의응답 엔드포인트
 """
 
 from fastapi import APIRouter, Depends
 
 from api.settings import Settings, get_settings
-from api.deps import resolve_search_params
-from api.schemas.chat import (
-    AskRequest,
-    AskResponse,
-    SearchHitOut,
-    SearchRequest,
-    SearchResponse,
-)
+from api.schemas.chat import AskRequest, AskResponse
 from api.schemas.units import AnswerUnitOut
 from api.services import rag_service
 
@@ -51,24 +44,4 @@ def ask(req: AskRequest, settings: Settings = Depends(get_settings)) -> AskRespo
         answer=result.answer,
         doc_ids=result.doc_ids,
         documents=[AnswerUnitOut.from_domain(d) for d in result.documents],
-    )
-
-
-@router.post(
-    "/search",
-    response_model=SearchResponse,
-    summary="답변 생성 없이 검색만 수행",
-    description="LLM 호출 없이 검색 품질과 vector_weight를 확인할 때 사용한다.",
-)
-def search(req: SearchRequest, settings: Settings = Depends(get_settings)) -> SearchResponse:
-    top_k, vector_weight = resolve_search_params(req.top_k, req.vector_weight, settings)
-
-    used_query, hits, documents = rag_service.search_only(
-        query=req.query, top_k=top_k, vector_weight=vector_weight, transform=req.transform
-    )
-
-    return SearchResponse(
-        query=used_query,
-        hits=[SearchHitOut.from_domain(h) for h in hits],
-        documents=[AnswerUnitOut.from_domain(d) for d in documents],
     )

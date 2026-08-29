@@ -34,7 +34,6 @@ api/
 | 메서드 | 경로 | 설명 |
 |---|---|---|
 | POST | `/api/v1/ask` | **질문 → 답변 + 근거 문서 id** |
-| POST | `/api/v1/search` | 답변 생성 없이 검색만 (LLM 비용 0) |
 | GET | `/api/v1/answer-units` | **모든 근거 문서 목록** |
 | GET | `/api/v1/answer-units/{doc_id}` | 문서 단건 + 연결된 검색 문장 |
 | GET | `/api/v1/search-units` | **모든 검색용 문장 목록** |
@@ -47,7 +46,9 @@ api/
 ### POST /api/v1/ask
 
 `query`가 필수고, 이전 대화가 있으면 `history`와 `conversation_id`를 함께 보낸다.
-`top_k`·`vector_weight`는 서버 기본값(`Settings`)을 쓰고, 근거 문서는 항상 포함하며,
+`top_k`·`vector_weight`는 **요청으로 받지 않는다.** 서버 기본값(`Settings`)만 쓴다 —
+클라이언트가 `top_k`를 올려 비용을 밀어넣을 수 있게 둘 이유가 없고, 검색 파라미터 튜닝은
+`python -m scripts.evaluate_search`로 오프라인에서 한다. 근거 문서는 항상 포함하며,
 환각 평가는 하지 않는다.
 
 ```jsonc
@@ -99,7 +100,7 @@ api/
 | 계층 | 위치 | 역할 |
 |---|---|---|
 | 도메인 | [domain/](../domain/) — `SearchHit`, `RetrievedChunk`, `Query`, `Answer` … | 모듈 간 내부 표현. 점수·임베딩 등 내부 값 포함 |
-| API | `api/schemas/` — `AskResponse`, `AnswerUnitOut`, `SearchHitOut` … | HTTP 계약. 노출할 필드만, 검증 규칙과 예시 포함 |
+| API | `api/schemas/` — `AskResponse`, `AnswerUnitOut`, `SearchUnitOut` … | HTTP 계약. 노출할 필드만, 검증 규칙과 예시 포함 |
 
 이유는 세 가지다.
 
@@ -107,8 +108,9 @@ api/
    응답에 필요 없다. `AnswerUnitOut.from_domain()`이 떨어뜨린다.
 2. **내부 리팩터링이 API 계약을 깨지 않는다.** dataclass 필드가 바뀌어도 `from_domain()`만 고치면
    클라이언트는 영향이 없다.
-3. **OpenAPI 문서 품질.** `top_k: Field(ge=1, le=20)`, `examples=[...]`가 Swagger에 그대로 나오고,
-   잘못된 입력은 라우터에 들어오기 전에 422로 막힌다 (빈 문자열 → 422 확인 완료).
+3. **OpenAPI 문서 품질.** `query: Field(min_length=1, max_length=1000)`, `examples=[...]`가
+   Swagger에 그대로 나오고, 잘못된 입력은 라우터에 들어오기 전에 422로 막힌다
+   (빈 문자열 → 422 확인 완료).
 
 변환은 각 스키마의 `from_domain()` / `from_row()` 한 곳에서만 한다. 라우터에는 변환 로직을 두지 않는다.
 
