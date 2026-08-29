@@ -1,9 +1,9 @@
 """
-db.py — 공용 PostgreSQL 커넥션 풀
+core/db.py — 공용 PostgreSQL 커넥션 풀
 
-rag_search와 API 계층이 같은 풀을 공유한다.
+core.search와 API 계층이 같은 풀을 공유한다.
 - FastAPI: lifespan에서 init_pool() / close_pool()로 명시적으로 관리
-- 스크립트(python rag_search.py 등): 첫 사용 시 지연 초기화되므로 별도 준비가 필요 없다
+- 스크립트(python -m core.search 등): 첫 사용 시 지연 초기화되므로 별도 준비가 필요 없다
 """
 
 import os

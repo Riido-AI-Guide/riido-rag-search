@@ -1,13 +1,13 @@
 """
 api/repositories/units_repository.py — answer_units / search_units 읽기 전용 조회
 
-검색(벡터·키워드)은 rag_search.py가 담당한다. 여기는 목록·단건·통계처럼
+검색(벡터·키워드)은 core/search.py가 담당한다. 여기는 목록·단건·통계처럼
 API에서만 필요한 단순 조회만 둔다.
 """
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from db import get_cursor
+from core.db import get_cursor
 
 ANSWER_COLUMNS = "doc_id, title, section, source_type, content, ord_idx"
 SEARCH_COLUMNS = "id, doc_id, view_type, text"

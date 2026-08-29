@@ -10,10 +10,10 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from domain import AnswerEvaluation, ConversationTurn, RetrievedChunk, SearchHit
-from evaluator import EvaluationError, evaluate_faithfulness
-from llm import generate_rag_answer
-from query_transform import generate_conversation_title, transform_user_query
-from rag_search import search as rag_search
+from core.evaluation import EvaluationError, evaluate_faithfulness
+from core.generation import generate_rag_answer
+from core.query_transform import generate_conversation_title, transform_user_query
+from core.search import search as rag_search
 
 logger = logging.getLogger(__name__)
 

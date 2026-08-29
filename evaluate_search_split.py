@@ -39,8 +39,8 @@ import psycopg2.extras
 from openai import OpenAI
 
 # 프로덕션 검색 코드를 그대로 재사용한다 — "평가한 것 = 실제 시스템"을 보장
-from db import DATABASE_URL
-from rag_search import embeddings, extract_keywords, build_tsquery, vector_search
+from core.db import DATABASE_URL
+from core.search import embeddings, extract_keywords, build_tsquery, vector_search
 
 
 def get_connection():

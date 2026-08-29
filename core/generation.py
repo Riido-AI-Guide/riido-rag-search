@@ -1,5 +1,5 @@
 """
-llm.py — 답변 생성
+core/generation.py — 답변 생성
 
 검색된 문서를 근거로 구조화된 답변(title + answerType + sections)을 만든다.
 - response_format으로 JSON 출력을 강제한다 (프롬프트 지시만으로는 형식이 흔들린다)
@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from domain import Answer, AnswerSection, RetrievedChunk, SourceRef
-from prompt import NO_ANSWER_TEXT, SECTION_LABELS, allowed_labels, build_rag_prompts
+from core.prompts import NO_ANSWER_TEXT, SECTION_LABELS, allowed_labels, build_rag_prompts
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))

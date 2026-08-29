@@ -1,10 +1,10 @@
 """
-rag_search.py — 검색 모듈 (분리혼합 하이브리드)
+core/search.py — 검색 모듈 (분리혼합 하이브리드)
 
 - 벡터 검색: search_units (가설질문/실제질문/맥락요약 문장 단위)
 - 키워드 검색: answer_content_vectors (가이드 원문 단위)
   질문 문장은 담긴 단어가 적어 키워드 매칭이 빈약하지만, 원문은 단어가
-  풍부해 잘 걸린다. 2차 평가에서 이 조합이 전 지표 우위(evaluate_search_split.py).
+  풍부해 잘 걸린다. 2차 평가에서 이 조합이 전 지표 우위(scripts/evaluate_search.py).
 - 두 순위를 문서 단위 RRF로 결합해 top-k 문서를 뽑고,
   answer_units에서 답변 본문을 가져온다
 - 임베딩: OpenAI text-embedding-3-small
@@ -17,11 +17,22 @@ import psycopg2.errors
 from langchain_openai import OpenAIEmbeddings
 from kiwipiepy import Kiwi
 
-from db import get_cursor
+from core.db import get_cursor
 from domain import RetrievedChunk, SearchHit
 
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 kiwi = Kiwi()
+
+
+def warmup() -> None:
+    """
+    Kiwi와 임베딩 클라이언트를 미리 만들어 둔다(수 초 소요).
+
+    실제 준비는 이 모듈을 import하는 것만으로 끝나므로 본문이 비어 있다.
+    그래도 함수로 두는 이유: 부팅 때 이걸 부르는 쪽(api/main.py)이
+    "import 부수효과에 기대는 중"이라는 사정을 주석으로 설명하지 않아도 되고,
+    나중에 지연 생성으로 바꾸면 이 함수 본문만 채우면 된다.
+    """
 
 
 def extract_keywords(text: str) -> str:

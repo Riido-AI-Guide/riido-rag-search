@@ -1,8 +1,8 @@
 """
-prompt.py — 답변 생성 프롬프트 조립
+core/prompts.py — 답변 생성 프롬프트 조립
 
 system 프롬프트와 user 프롬프트를 모두 여기서 만든다.
-(예전에는 system이 llm.py에 상수로 박혀 있어 프롬프트가 두 파일에 흩어져 있었다)
+(예전에는 system이 generation.py 쪽에 상수로 박혀 있어 프롬프트가 두 파일에 흩어져 있었다)
 """
 
 from typing import List, Tuple

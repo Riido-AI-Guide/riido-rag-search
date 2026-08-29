@@ -14,7 +14,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # rag_search.py / answer_builder.py와 같은 기본값
+    # core/search.py / scripts/build_answer_units.py와 같은 기본값
     database_url: str = "dbname=riido user=postgres password=postgres host=localhost port=5432"
 
     api_prefix: str = "/api/v1"
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # 오래된 턴까지 넣으면 지나간 주제가 재작성을 오염시키고 비용만 는다.
     history_turns: int = 5
 
-    # 검색 기본값 (rag_search.search의 기본 인자와 동일)
+    # 검색 기본값 (core.search.search의 기본 인자와 동일)
     default_top_k: int = 5
     default_vector_weight: float = 0.5
     max_top_k: int = 20
