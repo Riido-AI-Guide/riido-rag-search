@@ -8,28 +8,23 @@ rag_view_sentences.json(가설질문·실제질문·맥락요약 문장)을 검�
 - 이미 적재된 문장은 다시 임베딩하지 않는다(증분). JSON에서 빠진 문장은 정리한다.
 """
 
-import os
 import json
 import time
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
-import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
 from kiwipiepy import Kiwi
 
+from core.db import connect
 from domain import SearchChunk
 from scripts.paths import DATA_DIR
 from scripts.build_answer_units import setup_answer_table
 
 load_dotenv()
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "dbname=riido user=postgres password=postgres host=localhost port=5432",
-)
 
 VIEW_SENTENCES_PATH = DATA_DIR / "rag_view_sentences.json"
 EMBED_BATCH_SIZE = 90
@@ -37,10 +32,6 @@ EMBED_SLEEP_SEC = 5
 
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 kiwi = Kiwi()
-
-
-def get_connection():
-    return psycopg2.connect(DATABASE_URL)
 
 
 def extract_keywords(text: str) -> str:
@@ -58,7 +49,7 @@ def setup_search_table(embedding_dim: int) -> None:
     """search_units 생성. doc_id는 answer_units를 참조하고 답변이 지워지면 함께 정리된다."""
     setup_answer_table()  # FK 대상 테이블 보장
 
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
     cur.execute(f"""
@@ -119,7 +110,7 @@ def load_view_sentences(json_path: Path = VIEW_SENTENCES_PATH) -> List[SearchChu
 # ---------------------------------------------------------------------------
 
 def fetch_existing_keys() -> Set[Tuple[str, str]]:
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     cur.execute("SELECT doc_id, text FROM search_units;")
     keys = {(row[0], row[1]) for row in cur.fetchall()}
@@ -129,7 +120,7 @@ def fetch_existing_keys() -> Set[Tuple[str, str]]:
 
 
 def fetch_known_doc_ids() -> Set[str]:
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     cur.execute("SELECT doc_id FROM answer_units;")
     doc_ids = {row[0] for row in cur.fetchall()}
@@ -142,7 +133,7 @@ def embed_and_store(chunks: List[SearchChunk], batch_size: int = EMBED_BATCH_SIZ
     if not chunks:
         return
 
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
 
     for i in range(0, len(chunks), batch_size):
@@ -177,7 +168,7 @@ def prune_removed(keep_keys: Set[Tuple[str, str]]) -> int:
     if not stale:
         return 0
 
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     psycopg2.extras.execute_batch(
         cur,
@@ -229,7 +220,7 @@ def build_search_units(json_path: Path = VIEW_SENTENCES_PATH) -> None:
 
 
 def print_stats() -> None:
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
         SELECT view_type,
@@ -254,7 +245,7 @@ CONTENT_EMBED_CHARS = 8000  # 임베딩 입력 안전 상한 (모델 한도 초�
 
 
 def setup_content_table(embedding_dim: int) -> None:
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     cur.execute(f"""
         CREATE TABLE IF NOT EXISTS answer_content_vectors (
@@ -279,7 +270,7 @@ def build_content_vectors() -> None:
     dim = len(embeddings.embed_query("차원 확인"))
     setup_content_table(dim)
 
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
         SELECT a.doc_id, a.content

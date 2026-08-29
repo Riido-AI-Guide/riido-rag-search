@@ -127,8 +127,10 @@ api/
   FastAPI는 `lifespan`에서 `init_pool()`/`close_pool()`로 관리하고, 스크립트로 직접 실행할 때는
   첫 사용 시 지연 초기화된다. 커넥션은 SQL을 던지는 구간에서만 빌린다 — 임베딩(외부 API) 호출을
   마친 뒤에 빌리므로, 네트워크 대기 동안 커넥션을 붙잡지 않는다.
-  단, [scripts/build_answer_units.py](../scripts/build_answer_units.py)·[scripts/build_search_units.py](../scripts/build_search_units.py)는
-  배치 작업이라 각자 커넥션을 직접 연다(장시간 트랜잭션이 풀을 점유하면 안 되기 때문).
+  단, `scripts/`의 빌드 작업은 풀 대신 `core.db.connect()`로 독립 커넥션을 연다
+  (수 분짜리 트랜잭션이 풀을 점유하면 그동안 요청 처리 쪽이 굶는다).
+  DSN과 풀 크기 기본값의 출처는 [core/db.py](../core/db.py) 하나뿐이고,
+  `Settings.database_url`은 그 값을 기본값으로 얹어 `.env`로 덮어쓸 수 있게 한 것이다.
 - **LLM 오류 처리**: [core/generation.py](../core/generation.py)는 실패 시 `LlmError`를 올린다. `main.py`의 예외 핸들러가
   502로 변환하므로 오류 메시지가 정상 답변처럼 200 OK로 나가지 않는다.
   [core/evaluation.py](../core/evaluation.py)는 `EvaluationError`를 올린다. 평가는 부가 정보라

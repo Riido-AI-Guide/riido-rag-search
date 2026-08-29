@@ -1,9 +1,16 @@
 """
-core/db.py — 공용 PostgreSQL 커넥션 풀
+core/db.py — PostgreSQL 접속 설정과 커넥션 풀
 
-core.search와 API 계층이 같은 풀을 공유한다.
-- FastAPI: lifespan에서 init_pool() / close_pool()로 명시적으로 관리
-- 스크립트(python -m core.search 등): 첫 사용 시 지연 초기화되므로 별도 준비가 필요 없다
+**DB 접속 설정의 단일 출처다.** DSN과 풀 크기 기본값은 여기에만 두고,
+api/config.py의 Settings와 scripts/ 는 이 값을 가져다 쓴다. 같은 기본값을
+여러 파일에 복사해 두면 한쪽만 고쳐졌을 때 "환경에 따라 다른 DB를 본다"는
+가장 찾기 어려운 형태로 어긋난다.
+
+커넥션을 얻는 방법은 두 가지이고, 용도가 다르다.
+- get_connection() / get_cursor(): 풀에서 빌려 쓴다. 요청 처리용.
+  FastAPI는 lifespan에서 init_pool()/close_pool()로 관리하고,
+  스크립트에서 core.search를 직접 부르면 첫 사용 시 지연 초기화된다.
+- connect(): 풀을 거치지 않는 독립 커넥션. 인덱스 빌드 같은 배치용.
 """
 
 import os
@@ -24,6 +31,17 @@ DATABASE_URL = os.getenv(
 
 DEFAULT_MIN_CONN = 1
 DEFAULT_MAX_CONN = 10
+
+
+def connect() -> "psycopg2.extensions.connection":
+    """
+    풀을 거치지 않는 독립 커넥션. 호출자가 close()를 책임진다.
+
+    인덱스 빌드처럼 수 분짜리 트랜잭션을 여는 배치 작업용이다. 그런 작업이
+    풀에서 커넥션을 빌리면 그동안 요청 처리 쪽이 굶는다.
+    """
+    return psycopg2.connect(DATABASE_URL)
+
 
 _pool: Optional[ThreadedConnectionPool] = None
 _lock = threading.Lock()

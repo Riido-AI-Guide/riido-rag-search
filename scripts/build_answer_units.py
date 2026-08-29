@@ -9,7 +9,6 @@ scripts/build_answer_units.py — 답변용 테이블(answer_units) 빌드
 검색용 벡터는 이 파일이 아니라 retrieval_builder 쪽에서 doc_id를 참조해 생성한다.
 """
 
-import os
 import re
 import hashlib
 import unicodedata
@@ -17,18 +16,14 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
 import requests
-import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
 
+from core.db import connect
 from domain import RawChunk
 
 load_dotenv()
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "dbname=riido user=postgres password=postgres host=localhost port=5432",
-)
 
 GUIDE_URL = "https://docs.riido.io/llms-full.txt"
 SOURCE_TYPE_GUIDE = "guide"
@@ -67,10 +62,6 @@ class BuildReport:
 
 def sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def get_connection():
-    return psycopg2.connect(DATABASE_URL)
 
 
 def make_doc_id(source_type: str, section: str, dedup_idx: int = 0) -> str:
@@ -306,7 +297,7 @@ def build_answer_units(raw_text: str) -> List[RawChunk]:
 # ---------------------------------------------------------------------------
 
 def setup_answer_table() -> None:
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS answer_units (
@@ -328,7 +319,7 @@ def setup_answer_table() -> None:
 
 
 def fetch_existing_hashes(source_type: str) -> Dict[str, str]:
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     cur.execute(
         "SELECT doc_id, source_hash FROM answer_units WHERE source_type = %s;",
@@ -356,7 +347,7 @@ def upsert_answer_units(units: List[RawChunk], existing: Dict[str, str]) -> Buil
             report.unchanged.append(unit.doc_id)
 
     if changed:
-        conn = get_connection()
+        conn = connect()
         cur = conn.cursor()
         psycopg2.extras.execute_batch(cur, """
             INSERT INTO answer_units
@@ -383,7 +374,7 @@ def upsert_answer_units(units: List[RawChunk], existing: Dict[str, str]) -> Buil
 
 def prune_removed(source_type: str, keep_ids: Set[str]) -> List[str]:
     """원문에서 사라진 섹션 삭제. retrieval_vectors는 FK CASCADE로 함께 정리된다."""
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     cur.execute(
         "SELECT doc_id FROM answer_units WHERE source_type = %s;",
@@ -420,7 +411,7 @@ def build_guide_answer_units(url: str = GUIDE_URL) -> BuildReport:
 
 
 def print_stats() -> None:
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
         SELECT source_type,

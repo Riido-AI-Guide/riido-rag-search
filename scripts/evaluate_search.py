@@ -39,14 +39,10 @@ import psycopg2.extras
 from openai import OpenAI
 
 # 프로덕션 검색 코드를 그대로 재사용한다 — "평가한 것 = 실제 시스템"을 보장
-from core.db import DATABASE_URL
+from core.db import connect
 from core.search import embeddings, extract_keywords, build_tsquery, vector_search
 from scripts.paths import DATA_DIR
 
-
-def get_connection():
-    """평가 스크립트 전용 단순 커넥션 (프로덕션은 db.py 풀 사용)"""
-    return psycopg2.connect(DATABASE_URL)
 
 GOLDEN_PATH = DATA_DIR / "golden_set.json"
 TRANSFORM_CACHE_PATH = DATA_DIR / "eval_transform_cache.json"
@@ -67,7 +63,7 @@ QUESTION_CLEAN_MODEL = "gpt-4o-mini"
 # ---------------------------------------------------------------------------
 
 def setup_content_table(dim: int) -> None:
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     cur.execute(f"""
         CREATE TABLE IF NOT EXISTS answer_content_vectors (
@@ -87,7 +83,7 @@ def build_content_vectors() -> None:
     dim = len(embeddings.embed_query("차원 확인"))
     setup_content_table(dim)
 
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
         SELECT a.doc_id, a.content
@@ -123,7 +119,7 @@ def build_content_vectors() -> None:
 def content_vector_docs(query: str, top_k: int = 20) -> List[str]:
     """원문 벡터 검색 → 문서 순위"""
     qv = embeddings.embed_query(query)
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     cur.execute("""
         SELECT doc_id FROM answer_content_vectors
@@ -139,7 +135,7 @@ def content_keyword_docs(query: str, top_k: int = 20) -> List[str]:
     tsq = build_tsquery(extract_keywords(query))
     if not tsq:
         return []
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     cur.execute("""
         SELECT doc_id FROM answer_content_vectors

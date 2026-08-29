@@ -31,19 +31,15 @@ import sys
 import json
 from typing import Dict, List
 
-import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from core.db import connect
 from scripts.paths import DATA_DIR
 
 load_dotenv()
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "dbname=riido user=postgres password=postgres host=localhost port=5432",
-)
 
 QA_PATH = DATA_DIR / "qa_reviewed_20260804.json"
 DRAFT_PATH = DATA_DIR / "golden_labels_draft.json"     # LLM 제안 캐시
@@ -52,10 +48,6 @@ GOLDEN_PATH = DATA_DIR / "golden_set.json"             # 최종 골든셋
 
 LABEL_MODEL = os.getenv("GOLDEN_LABEL_MODEL", "gpt-4o")
 ANSWER_SNIPPET_CHARS = 1500  # 상담 답변은 앞부분만 잘라서 프롬프트에 넣는다
-
-
-def get_connection():
-    return psycopg2.connect(DATABASE_URL)
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +62,7 @@ def load_qa_items() -> List[Dict]:
 
 def fetch_doc_catalog() -> List[Dict]:
     """answer_units에서 정답 후보 문서 목록(doc_id, title, section)을 가져온다."""
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("SELECT doc_id, title, section FROM answer_units ORDER BY doc_id;")
     rows = cur.fetchall()
@@ -357,7 +349,7 @@ def run_synthesize(per_doc: int = 1) -> None:
             for row in json.load(f):
                 index_sentences.setdefault(row["doc_id"], []).append(row["text"])
 
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("SELECT doc_id, title, section, content FROM answer_units ORDER BY doc_id;")
     docs = cur.fetchall()

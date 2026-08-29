@@ -60,9 +60,6 @@ python -m scripts.evaluate_search            # Hit@1 / Hit@3 / MRR 채점
     로그 스키마의 컬럼이 의미를 갖는다.
   - 로그의 `doc_id`에는 FK를 걸지 않는다. [scripts/build_answer_units.py](scripts/build_answer_units.py)가
     사라진 문서를 지울 때 과거 로그까지 CASCADE로 삭제된다.
-- **설정값 이중 출처** — [core/db.py](core/db.py)가 자체적으로 `load_dotenv()`와 `DATABASE_URL`
-  기본값을 들고 있는데, [api/config.py](api/config.py)의 `Settings.database_url`도 같은 값을 읽는다.
-  같은 사실이 두 군데 있으면 언젠가 어긋난다. 한쪽으로 모아야 한다.
 - **import 시점 부수효과** — [core/search.py](core/search.py)가 모듈 로드 때 `Kiwi()`와
   `OpenAIEmbeddings()`를 만든다. 그래서 부팅 때 `warmup()`이 필요하고, 이 모듈을 import하는
   테스트는 무조건 수 초를 기다린다. 지연 생성으로 바꾸면 `warmup()` 본문이 실제 준비를 맡는다.
