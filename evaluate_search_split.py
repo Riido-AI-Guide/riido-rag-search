@@ -39,9 +39,13 @@ import psycopg2.extras
 from openai import OpenAI
 
 # 프로덕션 검색 코드를 그대로 재사용한다 — "평가한 것 = 실제 시스템"을 보장
-from rag_search import (
-    embeddings, get_connection, extract_keywords, build_tsquery, vector_search,
-)
+from db import DATABASE_URL
+from rag_search import embeddings, extract_keywords, build_tsquery, vector_search
+
+
+def get_connection():
+    """평가 스크립트 전용 단순 커넥션 (프로덕션은 db.py 풀 사용)"""
+    return psycopg2.connect(DATABASE_URL)
 
 GOLDEN_PATH = "./golden_set.json"
 TRANSFORM_CACHE_PATH = "./eval_transform_cache.json"
