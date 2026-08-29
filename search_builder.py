@@ -242,6 +242,75 @@ def print_stats() -> None:
     conn.close()
 
 
+# ---------------------------------------------------------------------------
+# 원문 키워드·벡터 인덱스 (answer_content_vectors)
+#   분리혼합 검색의 키워드 검색 대상. rag_search.content_keyword_search가 사용한다.
+#   (2차 평가 evaluate_search_split.py에서 검증된 구조를 정식 편입)
+# ---------------------------------------------------------------------------
+
+CONTENT_EMBED_CHARS = 8000  # 임베딩 입력 안전 상한 (모델 한도 초과 방지)
+
+
+def setup_content_table(embedding_dim: int) -> None:
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(f"""
+        CREATE TABLE IF NOT EXISTS answer_content_vectors (
+            doc_id    TEXT PRIMARY KEY REFERENCES answer_units(doc_id) ON DELETE CASCADE,
+            text_tsv  TSVECTOR,
+            embedding VECTOR({embedding_dim})
+        );
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_acv_tsv ON answer_content_vectors USING GIN (text_tsv);")
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def build_content_vectors() -> None:
+    """answer_units 원문을 임베딩·색인해서 채운다. 이미 된 문서는 건너뛴다(증분).
+
+    주의: 원문 content가 수정된 문서는 자동 갱신되지 않는다.
+    answer_builder가 변경 doc_id를 반환하므로, 대량 수정 시에는 해당 doc_id 행을
+    지우고 다시 실행하면 된다 (삭제된 문서는 FK CASCADE로 자동 정리).
+    """
+    dim = len(embeddings.embed_query("차원 확인"))
+    setup_content_table(dim)
+
+    conn = get_connection()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("""
+        SELECT a.doc_id, a.content
+        FROM answer_units a
+        LEFT JOIN answer_content_vectors v ON v.doc_id = a.doc_id
+        WHERE v.doc_id IS NULL
+        ORDER BY a.doc_id;
+    """)
+    todo = cur.fetchall()
+    if not todo:
+        print("✅ 원문 검색 인덱스(answer_content_vectors) 준비 완료 (이미 구축됨)")
+        cur.close(); conn.close()
+        return
+
+    print(f"🔨 원문 검색 인덱스 구축: {len(todo)}개 임베딩 (몇 분 걸릴 수 있음)")
+    for i in range(0, len(todo), EMBED_BATCH_SIZE):
+        batch = todo[i:i + EMBED_BATCH_SIZE]
+        vectors = embeddings.embed_documents([r["content"][:CONTENT_EMBED_CHARS] for r in batch])
+        for row, vec in zip(batch, vectors):
+            cur.execute("""
+                INSERT INTO answer_content_vectors (doc_id, text_tsv, embedding)
+                VALUES (%s, to_tsvector('simple', %s), %s::vector)
+                ON CONFLICT (doc_id) DO NOTHING;
+            """, (row["doc_id"], extract_keywords(row["content"]), str(vec)))
+        conn.commit()
+        print(f"  → {min(i + EMBED_BATCH_SIZE, len(todo))}/{len(todo)}")
+        if i + EMBED_BATCH_SIZE < len(todo):
+            time.sleep(EMBED_SLEEP_SEC)
+    cur.close()
+    conn.close()
+
+
 if __name__ == "__main__":
     build_search_units()
+    build_content_vectors()
     print_stats()
