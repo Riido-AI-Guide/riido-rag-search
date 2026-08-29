@@ -15,8 +15,9 @@ api/config.py의 Settings와 scripts/ 는 이 값을 가져다 쓴다. 같은 �
 
 import os
 import threading
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Iterator, Optional
+from typing import Optional
 
 import psycopg2.extras
 from dotenv import load_dotenv
@@ -74,7 +75,7 @@ def _require_pool() -> ThreadedConnectionPool:
 
 
 @contextmanager
-def get_connection() -> Iterator["psycopg2.extensions.connection"]:
+def get_connection() -> Generator["psycopg2.extensions.connection", None, None]:
     """풀에서 커넥션을 빌리고 블록을 벗어나면 반납한다 (닫지 않는다)."""
     pool = _require_pool()
     conn = pool.getconn()
@@ -89,7 +90,7 @@ def get_connection() -> Iterator["psycopg2.extensions.connection"]:
 
 
 @contextmanager
-def get_cursor(conn=None) -> Iterator[psycopg2.extras.RealDictCursor]:
+def get_cursor(conn=None) -> Generator[psycopg2.extras.RealDictCursor, None, None]:
     """
     RealDictCursor 컨텍스트.
 
