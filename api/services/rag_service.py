@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from dto import AnswerEvaluation, ConversationTurn, RetrievedChunk, SearchHit
+from domain import AnswerEvaluation, ConversationTurn, RetrievedChunk, SearchHit
 from evaluator import EvaluationError, evaluate_faithfulness
 from llm import generate_rag_answer
 from query_transform import generate_conversation_title, transform_user_query

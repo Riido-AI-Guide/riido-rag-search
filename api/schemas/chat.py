@@ -6,7 +6,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from dto import AnswerEvaluation, ConversationTurn, SearchHit
+from domain import AnswerEvaluation, ConversationTurn, SearchHit
 from api.schemas.units import AnswerUnitOut
 
 

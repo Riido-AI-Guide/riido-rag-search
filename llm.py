@@ -14,7 +14,7 @@ from typing import Any, Dict, List
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from dto import Answer, AnswerSection, RetrievedChunk, SourceRef
+from domain import Answer, AnswerSection, RetrievedChunk, SourceRef
 from prompt import NO_ANSWER_TEXT, SECTION_LABELS, allowed_labels, build_rag_prompts
 
 load_dotenv()

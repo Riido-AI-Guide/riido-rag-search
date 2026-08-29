@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Optional
 
-from dto import Answer, Query, RetrievedChunk
+from domain import Answer, Query, RetrievedChunk
 
 @dataclass
 class QnA:

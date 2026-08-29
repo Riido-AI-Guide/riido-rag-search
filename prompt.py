@@ -7,7 +7,7 @@ system 프롬프트와 user 프롬프트를 모두 여기서 만든다.
 
 from typing import List, Tuple
 
-from dto import RetrievedChunk
+from domain import RetrievedChunk
 
 
 # ---------------------------------------------------------------------------

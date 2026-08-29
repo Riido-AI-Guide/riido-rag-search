@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
 from kiwipiepy import Kiwi
 
-from dto import SearchChunk
+from domain import SearchChunk
 from answer_builder import setup_answer_table
 
 load_dotenv()

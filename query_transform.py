@@ -4,7 +4,7 @@ from typing import List, Optional
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from dto import ConversationTurn, Query
+from domain import ConversationTurn, Query
 
 # 이전 답변은 "무슨 얘기였는지"를 알려주는 용도라 앞부분만 있으면 충분하다.
 # 전문을 넣으면 재작성 한 번에 답변 N개가 통째로 들어가 비용이 턴 수에 비례해 늘고,

@@ -18,7 +18,7 @@ from langchain_openai import OpenAIEmbeddings
 from kiwipiepy import Kiwi
 
 from db import get_cursor
-from dto import RetrievedChunk, SearchHit
+from domain import RetrievedChunk, SearchHit
 
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 kiwi = Kiwi()

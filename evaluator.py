@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from dto import AnswerEvaluation
+from domain import AnswerEvaluation
 
 
 class EvaluationError(RuntimeError):

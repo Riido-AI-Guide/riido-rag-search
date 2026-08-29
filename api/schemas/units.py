@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from dto import RetrievedChunk
+from domain import RetrievedChunk
 
 
 class AnswerUnitOut(BaseModel):

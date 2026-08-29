@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from dto import AnswerEvaluation, AnswerSection
+from domain import AnswerEvaluation, AnswerSection
 
 
 @dataclass
