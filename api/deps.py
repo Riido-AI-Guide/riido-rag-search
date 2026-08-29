@@ -25,7 +25,7 @@ def resolve_search_params(
     vector_weight: Optional[float],
     settings: Settings,
 ):
-    """요청에 값이 없으면 서버 기본값으로 채운다"""
+    """요청에 값이 없으면 서버 기본값으로 채우기"""
     return (
         min(top_k or settings.default_top_k, settings.max_top_k),
         settings.default_vector_weight if vector_weight is None else vector_weight,

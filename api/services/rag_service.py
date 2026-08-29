@@ -1,8 +1,5 @@
 """
 api/services/rag_service.py — 질의 → 검색 → 답변 → (선택) 평가 오케스트레이션
-
-test_rag.py가 스크립트로 하던 흐름을 그대로 함수로 옮긴 것이다.
-기존 모듈은 수정하지 않고 호출만 한다.
 """
 
 import logging
@@ -17,9 +14,10 @@ from core.search import search as rag_search
 
 logger = logging.getLogger(__name__)
 
+# 미검색 시 메시지
 NO_SEARCH_MESSAGE = "안녕하세요! 뤼이도 이용 가이드에 대해 궁금한 점을 물어봐 주세요."
 
-# 대화 도중의 인사·감사에 첫 인사말을 돌려주면 대화가 처음으로 되감긴 것처럼 보인다.
+# 대화 도중 미검색 시 메시지
 NO_SEARCH_FOLLOW_UP_MESSAGE = "더 궁금한 점이 있으면 말씀해 주세요."
 
 
@@ -72,20 +70,12 @@ def ask(
 
     transformed = transform_user_query(query, history=recent_history)
 
-    # 제목은 첫 턴에서만 만든다. history도 conversation_id도 없는 요청이 곧 첫 턴이라는
-    # 게 /ask의 계약이다(AskRequest 참고). 자르기 전 history로 판단한다 —
-    # max_history_turns=0으로 recent_history가 비어도 그건 첫 턴이 아니다.
-    #
-    # 후속 턴에 다시 만들지 않는 이유: 백엔드가 이미 저장한 제목을 매 턴 덮어쓸지
-    # 말지 판단해야 하고, 대화가 길어질수록 제목이 흔들린다. 빈 문자열을 내려
-    # "바꿀 것 없음"을 뜻하게 하는 편이 계약이 단순하다.
-    #
-    # 인사·잡담(needs_search=False)이어도 만든다 — 백엔드는 그 턴에도 대화를 만들고,
-    # 제목 없는 대화가 목록에 남는다. 그런 질문에는 "새 대화"가 돌아온다.
+    # 제목은 첫 턴에서만 만든다. (history, conversation_id가 없을 경우)
+    # 인사·잡담(needs_search=False)이어도 만든다.
     if not history and not conversation_id:
         transformed.conversation_title = generate_conversation_title(query)
 
-    # 인사·잡담이면 검색도 생성도 하지 않는다
+    # 인사·잡담이면 검색, 생성 x
     if not transformed.needs_search:
         return AskResult(
             raw_query=query,
@@ -97,8 +87,7 @@ def ask(
             title=transformed.conversation_title,
         )
 
-    # 검색과 생성에는 재작성된 질문만 넘긴다.
-    # cleaned_query가 이미 맥락이 풀린 자립적인 문장이므로 이후 단계는 단일턴과 동일하다.
+    # 검색과 생성에는 재작성(전처리)된 질문만 넘긴다. -> 이후 단계는 단일턴과 동일
     hits, documents = rag_search(
         transformed.cleaned_query, top_k=top_k, vector_weight=vector_weight
     )
@@ -106,10 +95,9 @@ def ask(
     # LlmError는 잡지 않는다. 답변 생성 실패는 요청 실패이므로 그대로 올려보낸다.
     answer = generate_rag_answer(transformed.cleaned_query, documents)
 
+    # 추후 평가 기능 추가를 위한 placeholder
     evaluation = None
     if evaluate:
-        # 평가는 부가 정보다. 실패해도 이미 만들어진 답변까지 버릴 이유는 없으므로
-        # 로그만 남기고 evaluation=None으로 둔다(0.0으로 채우면 환각 판정과 구분되지 않는다).
         try:
             evaluation = evaluate_faithfulness(
                 question=transformed.cleaned_query,

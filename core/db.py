@@ -1,10 +1,7 @@
 """
 core/db.py — PostgreSQL 접속 설정과 커넥션 풀
 
-접속 설정(DSN, 풀 크기)은 core/config.py에서 가져온다. 이 파일이 하는 일은
-그 값으로 커넥션을 만들고 관리하는 것뿐이다.
-
-커넥션을 얻는 방법은 두 가지이고, 용도가 다르다.
+커넥션을 얻는 방법 두 가지
 - get_connection() / get_cursor(): 풀에서 빌려 쓴다. 요청 처리용.
   FastAPI는 lifespan에서 init_pool()/close_pool()로 관리하고,
   스크립트에서 core.search를 직접 부르면 첫 사용 시 지연 초기화된다.
@@ -25,9 +22,6 @@ from core.config import DATABASE_URL, DEFAULT_MAX_CONN, DEFAULT_MIN_CONN
 def connect() -> "psycopg2.extensions.connection":
     """
     풀을 거치지 않는 독립 커넥션. 호출자가 close()를 책임진다.
-
-    인덱스 빌드처럼 수 분짜리 트랜잭션을 여는 배치 작업용이다. 그런 작업이
-    풀에서 커넥션을 빌리면 그동안 요청 처리 쪽이 굶는다.
     """
     return psycopg2.connect(DATABASE_URL)
 

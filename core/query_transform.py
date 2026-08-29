@@ -5,21 +5,15 @@ from openai import OpenAI
 from core.config import OPENAI_API_KEY
 from domain import ConversationTurn, Query
 
-# 모듈 로드 때 한 번만 만든다. 예전에는 함수 안에서 매 호출 만들었는데,
-# 그러면 요청마다 .env를 다시 읽고 새 HTTP 커넥션 풀을 세운다.
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# 이전 답변은 "무슨 얘기였는지"를 알려주는 용도라 앞부분만 있으면 충분하다.
-# 전문을 넣으면 재작성 한 번에 답변 N개가 통째로 들어가 비용이 턴 수에 비례해 늘고,
-# 정작 중요한 마지막 질문이 긴 답변들에 묻힌다.
 _ANSWER_PREVIEW_CHARS = 150
 _QUESTION_PREVIEW_CHARS = 300
 
-# 대화 제목 길이 상한. 프롬프트가 20자 이내를 요구하지만 LLM이 넘길 수 있으므로
-# 목록 UI가 깨지지 않도록 서버에서 한 번 더 자른다(스타일 규칙이 아니라 안전장치다).
+# 대화 제목 길이 상한
 _TITLE_MAX_CHARS = 30
 
-# 제목을 못 만든 경우의 값. 빈 문자열로 두면 "멀티턴이라 안 만듦"과 구분되지 않는다.
+# 제목을 못 만든 경우의 값
 _DEFAULT_TITLE = "새 대화"
 
 
@@ -47,10 +41,7 @@ _BASE_SYSTEM_PROMPT = """
 }
 """
 
-# 이전 대화가 있을 때만 덧붙인다.
-# 히스토리가 없는 요청의 프롬프트는 예전과 100% 같아야 한다 —
-# golden_set.json 기준선이 단일턴으로 잡혀 있어서, 맥락 규칙을 항상 붙이면
-# 첫 질문의 재작성 결과까지 같이 흔들린다.
+# 멀티턴일 때 대화 맥락 추가
 _CONTEXT_SYSTEM_PROMPT = """
 
 [대화 맥락 처리]
@@ -68,11 +59,7 @@ _CONTEXT_SYSTEM_PROMPT = """
    맥락과 무관한 순수한 인사/감사("고마워", "잘 되네요")만 false입니다.
 """
 
-# 제목 생성은 별도 호출이다 — 위 프롬프트에 규칙을 얹지 않는다.
-# 히스토리가 없는 요청의 프롬프트는 예전과 100% 같아야 하는데(golden_set.json 기준선),
-# 제목이 필요한 순간이 바로 그 "히스토리 없는 첫 턴"이라 같은 프롬프트에 합치면
-# 기준선이 잡혀 있는 경로의 재작성 결과를 그대로 흔든다. 첫 턴에만 한 번 더 부르는
-# gpt-4o-mini 호출(입출력 수십 토큰)이 기준선을 다시 잡는 것보다 싸다.
+# 첫 대화 시 제목 생성
 _TITLE_SYSTEM_PROMPT = """
 당신은 고객 지원 챗봇의 대화 목록에 붙일 제목을 만드는 편집자입니다.
 사용자의 첫 질문을 읽고, 그 대화가 무엇에 대한 것인지 한눈에 알 수 있는 제목을 JSON으로만 응답하세요.
@@ -92,7 +79,7 @@ _TITLE_SYSTEM_PROMPT = """
 
 
 def _format_history(history: List[ConversationTurn]) -> str:
-    """이전 대화를 턴 번호가 붙은 텍스트로 직렬화한다."""
+    """이전 대화를 턴 번호가 붙은 텍스트로 직렬화"""
     lines = []
     for idx, turn in enumerate(history, start=1):
         question = turn.question.strip()[:_QUESTION_PREVIEW_CHARS]
@@ -108,7 +95,7 @@ def _format_history(history: List[ConversationTurn]) -> str:
 
 
 def _build_prompts(raw_query: str, history: List[ConversationTurn]):
-    """(system, user) 반환. history가 비면 예전 프롬프트와 완전히 동일하다."""
+    """(system, user) 반환"""
     if not history:
         return _BASE_SYSTEM_PROMPT.strip(), f"사용자 질문: {raw_query}"
 
@@ -131,9 +118,6 @@ def transform_user_query(
 ) -> Query:
     """
     사용자 질문을 분석하여 검색 필요 여부, 정제된 쿼리, 변형 쿼리를 반환하는 함수.
-
-    history를 주면 후속 질문의 대명사·생략을 앞 턴에서 풀어 독립적인 검색어로 만든다.
-    호출자가 넘길 턴 수를 이미 잘라서 준다고 가정한다(여기서 다시 자르지 않는다).
     """
     history = history or []
 
@@ -159,9 +143,7 @@ def transform_user_query(
         )
 
     except Exception:
-        # LLM 오류 발생 시.
-        # 맥락 해소에 실패했으므로 후속 질문이면 검색이 빗나갈 수 있지만,
-        # 원문으로라도 검색하는 편이 요청을 통째로 실패시키는 것보다 낫다.
+        # LLM 오류 발생 시 원문으로 검색
         return Query(
             raw_query=raw_query,
             cleaned_query=raw_query,
@@ -175,7 +157,7 @@ def transform_user_query(
 # ---------------------------------------------------------------------------
 
 def _fallback_title(raw_query: str) -> str:
-    """LLM 없이 만드는 제목. 원문을 줄여 쓴다 — 없는 것보다 낫고, 틀릴 수도 없다."""
+    """LLM 없이 만드는 제목. 원문을 줄여 쓴다"""
     text = " ".join((raw_query or "").split())
     if not text:
         return _DEFAULT_TITLE
@@ -187,12 +169,6 @@ def _fallback_title(raw_query: str) -> str:
 def generate_conversation_title(raw_query: str, model_name: str = "gpt-4o-mini") -> str:
     """
     첫 질문으로 대화 목록에 걸 제목을 만든다. 첫 턴에서만 부른다.
-
-    정제된 질문(cleaned_query)이 아니라 원문을 넣는다. 제목은 사용자가 자기 대화를
-    알아보는 용도라 재작성이 고른 "중심 주제"보다 실제로 물어본 말에 가까워야 하고,
-    이렇게 두면 재작성이 실패해도 제목은 멀쩡하다(두 호출이 서로 독립적이다).
-
-    실패해도 예외를 올리지 않는다 — 제목 때문에 답변까지 실패시킬 이유가 없다.
     """
     try:
         response = client.chat.completions.create(

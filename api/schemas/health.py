@@ -1,8 +1,5 @@
 """
 api/schemas/health.py — 인덱스 적재 상태
-
-"테이블이 없음"과 "테이블은 있는데 비어 있음"을 구분해서 보여준다.
-검색 결과가 0건일 때 인덱스 미구축 때문인지 판단하는 근거가 된다.
 """
 
 from typing import List, Literal, Optional

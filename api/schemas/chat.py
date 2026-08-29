@@ -59,13 +59,11 @@ class EvaluationOut(BaseModel):
 
 
 # 요청 하나에 실어 보낼 수 있는 이전 턴의 상한.
-# 정책값이 아니라 비정상 페이로드를 막는 안전장치다. 실제로 몇 턴을 쓸지는
-# Settings.history_turns가 정하고, 서버가 최근 것부터 잘라 쓴다.
+# 비정상 페이로드를 막는 안전장치 (실제로 몇 턴을 쓸지는 Settings.history_turns가 정함)
 MAX_HISTORY_TURNS = 50
 
 
 class ConversationTurnIn(BaseModel):
-    """이미 끝난 대화 한 턴. 대화의 소유자는 백엔드이고, 이 서비스는 받은 것만 본다"""
     question: str = Field(
         min_length=1, max_length=1000,
         description="그 턴의 사용자 질문 원문",
@@ -147,7 +145,7 @@ class AskResponse(BaseModel):
 
 
 class SearchRequest(SearchOptions):
-    """답변 생성 없이 검색만 — LLM 비용 0으로 vector_weight를 튜닝할 때 쓴다"""
+    """답변 생성 없이 검색만"""
     query: str = Field(min_length=1, max_length=1000, examples=["스프린트 기간"])
     transform: bool = Field(default=False, description="true면 query_transform으로 정제 후 검색")
 

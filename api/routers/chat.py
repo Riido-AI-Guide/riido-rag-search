@@ -1,8 +1,5 @@
 """
 api/routers/chat.py — 질의응답 및 검색 전용 엔드포인트
-
-동기 함수(def)로 선언한 이유: psycopg2·openai·langchain이 모두 동기 라이브러리라
-async def로 두면 이벤트 루프가 막힌다. FastAPI가 스레드풀에서 실행해 준다.
 """
 
 from fastapi import APIRouter, Depends
@@ -34,9 +31,6 @@ router = APIRouter(tags=["chat"])
     ),
 )
 def ask(req: AskRequest, settings: Settings = Depends(get_settings)) -> AskResponse:
-    # 검색 파라미터는 서버 기본값을 쓰고, 평가는 하지 않는다.
-    # 대화 이력은 요청 바디로 받은 것만 쓴다 — conversation_id로 대화 DB를 조회하지 않는다.
-    # (요청 경로에서 남의 DB를 읽으면 그쪽 장애·마이그레이션이 답변 실패가 된다)
     # LlmError는 api/main.py의 예외 핸들러가 502로 변환한다
     result = rag_service.ask(
         query=req.query,

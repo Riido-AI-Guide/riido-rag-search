@@ -1,8 +1,5 @@
 """
-api/repositories/units_repository.py — answer_units / search_units 읽기 전용 조회
-
-검색(벡터·키워드)은 core/search.py가 담당한다. 여기는 목록·단건·통계처럼
-API에서만 필요한 단순 조회만 둔다.
+api/repositories/units_repository.py — DB 읽기 전용 조회
 """
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -109,7 +106,7 @@ def view_type_stats() -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# 헬스체크
+# health_check
 # ---------------------------------------------------------------------------
 
 def table_status(table: str) -> Tuple[bool, int]:

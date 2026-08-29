@@ -24,9 +24,7 @@ logger = logging.getLogger("api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # core.search와 API 조회가 같은 풀을 쓴다 (core/db.py).
-    # 접속 정보와 풀 크기는 core/config.py가 갖고 있으므로 인자 없이 부른다.
-    # 여기서 미리 만들어 두는 이유는 첫 요청이 풀 생성 비용을 떠안지 않게 하려는 것.
+    # 첫 요청이 풀 생성 비용을 떠안지 않도록 미리 풀을 만든다
     init_pool()
 
     # core.search는 로드 시점에 Kiwi와 임베딩 클라이언트를 만든다(수 초 소요).
@@ -63,7 +61,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(psycopg2.errors.UndefinedTable)
     async def undefined_table_handler(request: Request, exc: psycopg2.errors.UndefinedTable):
-        """인덱스가 아직 없을 때 500 대신 원인을 알려준다"""
+        """인덱스가 아직 없을 때"""
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={
@@ -74,7 +72,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(LlmError)
     async def llm_error_handler(request: Request, exc: LlmError):
-        """답변 생성 실패를 200 OK로 내보내지 않는다"""
+        """답변 생성 실패"""
         logger.exception("답변 생성 실패")
         return JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY,

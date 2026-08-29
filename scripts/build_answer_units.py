@@ -5,8 +5,6 @@ scripts/build_answer_units.py — 답변용 테이블(answer_units) 빌드
 - 답변 단위 = H2 섹션 전체 (문자 수로 자르지 않음)
 - 표/코드블록을 관통해서 자르지 않음
 - source_hash 기반 증분 빌드 → 변경된 doc_id만 반환 (검색 벡터 재생성용)
-
-검색용 벡터는 이 파일이 아니라 retrieval_builder 쪽에서 doc_id를 참조해 생성한다.
 """
 
 import re
@@ -27,7 +25,6 @@ GUIDE_URL = "https://docs.riido.io/llms-full.txt"
 SOURCE_TYPE_GUIDE = "guide"
 
 # H2 섹션이 이보다 길면 H3 → 문단 순으로 분할한다.
-# 600자 절단과 달리 대부분의 섹션은 분할 없이 통째로 유지된다.
 MAX_UNIT_CHARS = 2400
 
 
@@ -188,8 +185,7 @@ def split_h3_sections(text: str) -> List[Tuple[Optional[str], str]]:
 
 
 def split_into_blocks(text: str) -> List[str]:
-    """빈 줄 기준 블록 분리. 코드펜스 내부의 빈 줄은 무시한다.
-    마크다운 표는 내부에 빈 줄이 없어 자연히 한 블록으로 유지된다."""
+    """빈 줄 기준 블록 분리"""
     blocks: List[str] = []
     buffer: List[str] = []
     in_fence = False
@@ -215,8 +211,7 @@ def split_into_blocks(text: str) -> List[str]:
 
 
 def pack_blocks(text: str, max_chars: int) -> List[str]:
-    """블록을 관통하지 않으면서 max_chars에 최대한 채워 담는다.
-    표·코드블록이 중간에서 잘리는 일이 없다."""
+    """블록 단위로 묶어 max_chars 이하 조각으로"""
     blocks = split_into_blocks(text)
     packed: List[str] = []
     current: List[str] = []

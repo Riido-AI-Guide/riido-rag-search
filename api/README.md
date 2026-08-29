@@ -1,10 +1,6 @@
-# Riido RAG API (초안)
+# Riido RAG API
 
-코어 모듈([core/search.py](../core/search.py), [core/generation.py](../core/generation.py),
-[core/evaluation.py](../core/evaluation.py), [core/query_transform.py](../core/query_transform.py))은
-**수정하지 않고 호출만** 한다. API에 필요한 것만 이 폴더 안에 새로 작성했다.
-
-의존 방향은 `api/` → `core/` → `domain/` 단방향이다. 코어는 HTTP를 모르고,
+의존 방향은 `api/` → `core/` → `domain/` 단방향이다. 코어는 HTTP를 모르고, 
 아무도 `api/`를 import하지 않는다.
 
 ## 실행

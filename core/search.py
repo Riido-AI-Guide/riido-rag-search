@@ -21,11 +21,7 @@ from core.config import OPENAI_API_KEY
 from core.db import get_cursor
 from domain import RetrievedChunk, SearchHit
 
-# OpenAIEmbeddings는 생성자 인자가 아니라 OPENAI_API_KEY 환경변수를 직접 읽는다.
-# 그래서 이 파일은 .env가 이미 올라와 있다는 전제에 기대는데, 예전에는 그 보장이
-# "core.db가 먼저 import되면서 load_dotenv()를 부른다"는 우연이었다.
-# 이제 core.config를 직접 import해 그 의존을 눈에 보이게 만들고, 키가 없으면
-# langchain의 검증 오류 대신 무엇을 채워야 하는지 알려주고 멈춘다.
+
 if not OPENAI_API_KEY:
     raise RuntimeError(
         "OPENAI_API_KEY가 설정되지 않았습니다. .env를 확인하세요 (.env.example 참고)."
@@ -37,12 +33,8 @@ kiwi = Kiwi()
 
 def warmup() -> None:
     """
-    Kiwi와 임베딩 클라이언트를 미리 만들어 둔다(수 초 소요).
-
-    실제 준비는 이 모듈을 import하는 것만으로 끝나므로 본문이 비어 있다.
-    그래도 함수로 두는 이유: 부팅 때 이걸 부르는 쪽(api/main.py)이
-    "import 부수효과에 기대는 중"이라는 사정을 주석으로 설명하지 않아도 되고,
-    나중에 지연 생성으로 바꾸면 이 함수 본문만 채우면 된다.
+    Kiwi와 임베딩 클라이언트를 미리 만들어 둔다. 
+    (첫 호출 시 Kiwi가 모델을 로드하고, 임베딩 클라이언트가 OpenAI 서버와 연결하는 데 시간이 걸린다)
     """
 
 
@@ -53,7 +45,6 @@ def extract_keywords(text: str) -> str:
 
 
 # 질문에 흔히 섞이는 기능어 어간. 인덱스에는 남겨두고 질의에서만 뺀다
-# ("어떻게 해?"의 '어떻'·'하'가 OR에 들어가면 무관한 문장이 대량으로 딸려온다)
 QUERY_STOPWORDS = {
     "하", "되", "있", "없", "수", "것", "거", "등", "때", "좀",
     "어떻", "어떠", "같", "이", "그", "저", "무엇", "뭐",

@@ -10,7 +10,6 @@ from domain import RetrievedChunk
 
 
 class AnswerUnitOut(BaseModel):
-    """answer_units 한 행 = 근거 문서"""
     doc_id: str = Field(description="답변 단위 식별자", examples=["guide/팀/팀-관리"])
     title: str
     section: str = Field(examples=["팀 > 팀 관리"])
@@ -31,7 +30,6 @@ class AnswerUnitOut(BaseModel):
 
     @classmethod
     def from_domain(cls, chunk: RetrievedChunk, include_content: bool = True) -> "AnswerUnitOut":
-        """검색 결과(RetrievedChunk) → 응답. hits(검색 점수)는 여기서 떨어뜨린다"""
         return cls(
             doc_id=chunk.doc_id,
             title=chunk.title,
@@ -43,7 +41,6 @@ class AnswerUnitOut(BaseModel):
 
 
 class SearchUnitOut(BaseModel):
-    """search_units 한 행 = 검색용 문장"""
     id: int
     doc_id: str = Field(description="이 문장이 가리키는 answer_units 문서")
     view_type: str = Field(description="hypo_q(가설질문) / real_q(실제질문) / contextual(맥락요약)")
