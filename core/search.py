@@ -17,8 +17,19 @@ import psycopg2.errors
 from langchain_openai import OpenAIEmbeddings
 from kiwipiepy import Kiwi
 
+from core.config import OPENAI_API_KEY
 from core.db import get_cursor
 from domain import RetrievedChunk, SearchHit
+
+# OpenAIEmbeddings는 생성자 인자가 아니라 OPENAI_API_KEY 환경변수를 직접 읽는다.
+# 그래서 이 파일은 .env가 이미 올라와 있다는 전제에 기대는데, 예전에는 그 보장이
+# "core.db가 먼저 import되면서 load_dotenv()를 부른다"는 우연이었다.
+# 이제 core.config를 직접 import해 그 의존을 눈에 보이게 만들고, 키가 없으면
+# langchain의 검증 오류 대신 무엇을 채워야 하는지 알려주고 멈춘다.
+if not OPENAI_API_KEY:
+    raise RuntimeError(
+        "OPENAI_API_KEY가 설정되지 않았습니다. .env를 확인하세요 (.env.example 참고)."
+    )
 
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 kiwi = Kiwi()

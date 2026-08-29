@@ -24,7 +24,7 @@ uvicorn api.main:app --reload               # 프로젝트 루트에서
 ```
 api/
 ├── main.py                        FastAPI 앱, lifespan, 예외 핸들러
-├── config.py                      Settings (DATABASE_URL, 기본 top_k 등)
+├── settings.py                    HTTP 계층 정책 (CORS, 기본 top_k, 페이지 크기)
 ├── deps.py                        페이지네이션·검색 파라미터 기본값
 ├── schemas/                       HTTP 경계 Pydantic 모델
 │   ├── common.py  chat.py  units.py  health.py

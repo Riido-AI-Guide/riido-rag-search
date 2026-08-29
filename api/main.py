@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api.config import get_settings
+from api.settings import get_settings
 from core.db import close_pool, init_pool
 from api.routers import answer_units, chat, health, search_units
 from core.generation import LlmError
@@ -24,10 +24,10 @@ logger = logging.getLogger("api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    settings = get_settings()
-    # core.search와 API 조회가 같은 풀을 쓴다 (core/db.py). 여기서 미리 만들어 두지 않으면
-    # 첫 사용 시 지연 초기화되므로 크기 설정이 반영되지 않는다.
-    init_pool(settings.database_url, settings.db_pool_min, settings.db_pool_max)
+    # core.search와 API 조회가 같은 풀을 쓴다 (core/db.py).
+    # 접속 정보와 풀 크기는 core/config.py가 갖고 있으므로 인자 없이 부른다.
+    # 여기서 미리 만들어 두는 이유는 첫 요청이 풀 생성 비용을 떠안지 않게 하려는 것.
+    init_pool()
 
     # core.search는 로드 시점에 Kiwi와 임베딩 클라이언트를 만든다(수 초 소요).
     # 첫 요청이 이 비용을 떠안지 않도록 부팅 때 미리 끌어올린다.

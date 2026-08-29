@@ -1,10 +1,8 @@
 """
 core/db.py — PostgreSQL 접속 설정과 커넥션 풀
 
-**DB 접속 설정의 단일 출처다.** DSN과 풀 크기 기본값은 여기에만 두고,
-api/config.py의 Settings와 scripts/ 는 이 값을 가져다 쓴다. 같은 기본값을
-여러 파일에 복사해 두면 한쪽만 고쳐졌을 때 "환경에 따라 다른 DB를 본다"는
-가장 찾기 어려운 형태로 어긋난다.
+접속 설정(DSN, 풀 크기)은 core/config.py에서 가져온다. 이 파일이 하는 일은
+그 값으로 커넥션을 만들고 관리하는 것뿐이다.
 
 커넥션을 얻는 방법은 두 가지이고, 용도가 다르다.
 - get_connection() / get_cursor(): 풀에서 빌려 쓴다. 요청 처리용.
@@ -13,25 +11,15 @@ api/config.py의 Settings와 scripts/ 는 이 값을 가져다 쓴다. 같은 �
 - connect(): 풀을 거치지 않는 독립 커넥션. 인덱스 빌드 같은 배치용.
 """
 
-import os
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Optional
 
 import psycopg2.extras
-from dotenv import load_dotenv
 from psycopg2.pool import ThreadedConnectionPool
 
-load_dotenv()
-
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "dbname=riido user=postgres password=postgres host=localhost port=5432",
-)
-
-DEFAULT_MIN_CONN = 1
-DEFAULT_MAX_CONN = 10
+from core.config import DATABASE_URL, DEFAULT_MAX_CONN, DEFAULT_MIN_CONN
 
 
 def connect() -> "psycopg2.extensions.connection":

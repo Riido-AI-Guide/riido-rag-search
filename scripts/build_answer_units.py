@@ -17,12 +17,10 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import requests
 import psycopg2.extras
-from dotenv import load_dotenv
 
 from core.db import connect
 from domain import RawChunk
 
-load_dotenv()
 
 
 GUIDE_URL = "https://docs.riido.io/llms-full.txt"

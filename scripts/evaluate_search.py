@@ -39,6 +39,7 @@ import psycopg2.extras
 from openai import OpenAI
 
 # 프로덕션 검색 코드를 그대로 재사용한다 — "평가한 것 = 실제 시스템"을 보장
+from core.config import OPENAI_API_KEY
 from core.db import connect
 from core.search import embeddings, extract_keywords, build_tsquery, vector_search
 from scripts.paths import DATA_DIR
@@ -203,7 +204,7 @@ _client = None
 def to_question_form(raw: str) -> str:
     global _client
     if _client is None:
-        _client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        _client = OpenAI(api_key=OPENAI_API_KEY)
     try:
         res = _client.chat.completions.create(
             model=QUESTION_CLEAN_MODEL,

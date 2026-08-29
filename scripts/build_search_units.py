@@ -14,21 +14,27 @@ from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
 import psycopg2.extras
-from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
 from kiwipiepy import Kiwi
 
+from core.config import OPENAI_API_KEY
 from core.db import connect
 from domain import SearchChunk
 from scripts.paths import DATA_DIR
 from scripts.build_answer_units import setup_answer_table
 
-load_dotenv()
 
 
 VIEW_SENTENCES_PATH = DATA_DIR / "rag_view_sentences.json"
 EMBED_BATCH_SIZE = 90
 EMBED_SLEEP_SEC = 5
+
+# core/search.py와 같은 이유로 키 존재를 먼저 확인한다
+# (OpenAIEmbeddings가 환경변수를 직접 읽는다).
+if not OPENAI_API_KEY:
+    raise RuntimeError(
+        "OPENAI_API_KEY가 설정되지 않았습니다. .env를 확인하세요 (.env.example 참고)."
+    )
 
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 kiwi = Kiwi()

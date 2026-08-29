@@ -6,7 +6,7 @@ from typing import Optional
 
 from fastapi import Depends, Query as QueryParam
 
-from api.config import Settings, get_settings
+from api.settings import Settings, get_settings
 
 
 class Pagination:

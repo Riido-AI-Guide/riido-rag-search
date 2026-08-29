@@ -32,13 +32,12 @@ import json
 from typing import Dict, List
 
 import psycopg2.extras
-from dotenv import load_dotenv
 from openai import OpenAI
 
+from core.config import OPENAI_API_KEY
 from core.db import connect
 from scripts.paths import DATA_DIR
 
-load_dotenv()
 
 
 QA_PATH = DATA_DIR / "qa_reviewed_20260804.json"
@@ -160,7 +159,7 @@ def question_preview(text: str, limit: int = 150) -> str:
 
 
 def run_propose() -> None:
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    client = OpenAI(api_key=OPENAI_API_KEY)
     items = load_qa_items()
     catalog = fetch_doc_catalog()
     catalog_str = catalog_text(catalog)
@@ -362,7 +361,7 @@ def run_synthesize(per_doc: int = 1) -> None:
         print("   보충할 문서가 없습니다.")
         return
 
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    client = OpenAI(api_key=OPENAI_API_KEY)
     added = 0
     for i, doc in enumerate(targets, 1):
         existing = "\n".join(f"- {t}" for t in index_sentences.get(doc["doc_id"], [])) or "(없음)"

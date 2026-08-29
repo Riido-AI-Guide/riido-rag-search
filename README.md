@@ -6,7 +6,7 @@
 
 ```
 api/        HTTP 계층 — FastAPI 앱, 라우터, 스키마, 서비스, 리포지토리
-core/       RAG 코어 — 검색·질문 전처리·답변 생성·평가·DB 풀. HTTP를 모른다
+core/       RAG 코어 — 검색·질문 전처리·답변 생성·평가·DB 풀·환경설정. HTTP를 모른다
 domain/     도메인 dataclass — SearchHit, RetrievedChunk, Query, Answer …
 scripts/    오프라인 CLI — 인덱스 빌드, 골든셋 만들기, 검색 평가
 data/       입력·산출 데이터 (json, csv)
@@ -22,6 +22,7 @@ data/       입력·산출 데이터 (json, csv)
 ## 실행
 
 ```bash
+cp .env.example .env                        # DATABASE_URL·OPENAI_API_KEY 채우기
 pip install -r requirements.txt
 
 python -m scripts.build_answer_units        # answer_units 적재 (먼저)
@@ -29,6 +30,22 @@ python -m scripts.build_search_units        # search_units 적재
 
 uvicorn api.main:app --reload               # 저장소 루트에서
 ```
+
+### 설정
+
+설정 파일은 둘이고, 다루는 것이 겹치지 않는다.
+
+| 파일 | 갖는 것 | 쓰는 쪽 |
+|---|---|---|
+| [core/config.py](core/config.py) | 환경변수에서 오는 값 — DB 접속·풀 크기, OpenAI 키 | `core/`, `scripts/`, `api/` |
+| [api/settings.py](api/settings.py) | HTTP 계층 정책 — CORS, 경로 접두사, 페이지·검색 기본값 | `api/`만 |
+
+`.env`는 `core/config.py`가 한 번만 읽고, 다른 파일에서 `os.getenv()`를 직접 부르지 않는다.
+필요한 값의 목록은 [.env.example](.env.example)이 전부다.
+
+한쪽이 다른 쪽 값을 받아 그대로 넘기기만 하는 필드는 두지 않는다. 통과만 하는 필드가 있으면
+"이 설정의 주인이 누구인가"가 흐려진다. HTTP 계층 설정을 `core/`에 합치지 않는 이유도 같다 —
+`core/`는 HTTP를 몰라야 `scripts/`가 그대로 쓸 수 있다.
 
 Swagger: http://127.0.0.1:8000/docs · API 상세는 [api/README.md](api/README.md)
 

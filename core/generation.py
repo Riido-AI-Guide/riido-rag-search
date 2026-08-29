@@ -8,17 +8,15 @@ core/generation.py — 답변 생성
 """
 
 import json
-import os
 from typing import Any, Dict, List
 
-from dotenv import load_dotenv
 from openai import OpenAI
 
 from domain import Answer, AnswerSection, RetrievedChunk, SourceRef
+from core.config import OPENAI_API_KEY
 from core.prompts import NO_ANSWER_TEXT, SECTION_LABELS, allowed_labels, build_rag_prompts
 
-load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 class LlmError(RuntimeError):
     """

@@ -7,7 +7,7 @@ async def로 두면 이벤트 루프가 막힌다. FastAPI가 스레드풀에서
 
 from fastapi import APIRouter, Depends
 
-from api.config import Settings, get_settings
+from api.settings import Settings, get_settings
 from api.deps import resolve_search_params
 from api.schemas.chat import (
     AskRequest,

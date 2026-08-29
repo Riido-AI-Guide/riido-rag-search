@@ -1,10 +1,13 @@
-import os
 import json
 from typing import List, Optional
-from dotenv import load_dotenv
 from openai import OpenAI
 
+from core.config import OPENAI_API_KEY
 from domain import ConversationTurn, Query
+
+# 모듈 로드 때 한 번만 만든다. 예전에는 함수 안에서 매 호출 만들었는데,
+# 그러면 요청마다 .env를 다시 읽고 새 HTTP 커넥션 풀을 세운다.
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 # 이전 답변은 "무슨 얘기였는지"를 알려주는 용도라 앞부분만 있으면 충분하다.
 # 전문을 넣으면 재작성 한 번에 답변 N개가 통째로 들어가 비용이 턴 수에 비례해 늘고,
@@ -134,9 +137,6 @@ def transform_user_query(
     """
     history = history or []
 
-    load_dotenv()
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
     system_prompt, user_prompt = _build_prompts(raw_query, history)
 
     try:
@@ -194,9 +194,6 @@ def generate_conversation_title(raw_query: str, model_name: str = "gpt-4o-mini")
 
     실패해도 예외를 올리지 않는다 — 제목 때문에 답변까지 실패시킬 이유가 없다.
     """
-    load_dotenv()
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
     try:
         response = client.chat.completions.create(
             model=model_name,
