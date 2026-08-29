@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
     cors_origins: List[str] = ["*"]
 
+    # 멀티턴 — 질문 재작성에 실제로 쓸 이전 턴 수.
+    # 요청이 더 많이 보내와도 여기까지만 쓴다(최근 것부터). 늘려 쓰지는 않는다.
+    # 오래된 턴까지 넣으면 지나간 주제가 재작성을 오염시키고 비용만 는다.
+    history_turns: int = 5
+
     # 검색 기본값 (rag_search.search의 기본 인자와 동일)
     default_top_k: int = 5
     default_vector_weight: float = 0.5
