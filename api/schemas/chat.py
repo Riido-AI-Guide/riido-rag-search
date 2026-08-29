@@ -127,6 +127,17 @@ class AskResponse(BaseModel):
         default=0, description="재작성에 실제로 사용한 이전 턴 수. 0이면 첫 턴처럼 처리했다는 뜻"
     )
 
+    title: str = Field(
+        default="",
+        description=(
+            "대화 제목. **첫 턴에서만** 채워서 보낸다(history와 conversation_id가 둘 다 "
+            "없는 요청). 후속 턴이면 빈 문자열이며, 이는 \"제목을 바꾸지 말라\"는 뜻이다 — "
+            "빈 문자열로 대화 제목을 덮어쓰지 말 것. 제목 생성에 실패해도 빈 값이 아니라 "
+            "질문 원문을 줄인 값이나 \"새 대화\"가 온다."
+        ),
+        examples=["팀원 추가 방법"],
+    )
+
     answer: str
     doc_ids: List[str] = Field(description="답변의 근거가 된 answer_units 식별자")
 

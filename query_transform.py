@@ -12,6 +12,13 @@ from dto import ConversationTurn, Query
 _ANSWER_PREVIEW_CHARS = 150
 _QUESTION_PREVIEW_CHARS = 300
 
+# 대화 제목 길이 상한. 프롬프트가 20자 이내를 요구하지만 LLM이 넘길 수 있으므로
+# 목록 UI가 깨지지 않도록 서버에서 한 번 더 자른다(스타일 규칙이 아니라 안전장치다).
+_TITLE_MAX_CHARS = 30
+
+# 제목을 못 만든 경우의 값. 빈 문자열로 두면 "멀티턴이라 안 만듦"과 구분되지 않는다.
+_DEFAULT_TITLE = "새 대화"
+
 
 # ---------------------------------------------------------------------------
 # 프롬프트
@@ -56,6 +63,28 @@ _CONTEXT_SYSTEM_PROMPT = """
    "응 알려줘", "더 자세히", "그럼 두 번째 방법은?"처럼 그 문장만 보면 잡담 같아도,
    이전 대화에 이어 정보를 더 요구하는 것이면 true입니다.
    맥락과 무관한 순수한 인사/감사("고마워", "잘 되네요")만 false입니다.
+"""
+
+# 제목 생성은 별도 호출이다 — 위 프롬프트에 규칙을 얹지 않는다.
+# 히스토리가 없는 요청의 프롬프트는 예전과 100% 같아야 하는데(golden_set.json 기준선),
+# 제목이 필요한 순간이 바로 그 "히스토리 없는 첫 턴"이라 같은 프롬프트에 합치면
+# 기준선이 잡혀 있는 경로의 재작성 결과를 그대로 흔든다. 첫 턴에만 한 번 더 부르는
+# gpt-4o-mini 호출(입출력 수십 토큰)이 기준선을 다시 잡는 것보다 싸다.
+_TITLE_SYSTEM_PROMPT = """
+당신은 고객 지원 챗봇의 대화 목록에 붙일 제목을 만드는 편집자입니다.
+사용자의 첫 질문을 읽고, 그 대화가 무엇에 대한 것인지 한눈에 알 수 있는 제목을 JSON으로만 응답하세요.
+
+[규칙]
+1. 한국어 명사구로, 공백 포함 20자 이내. 마침표·물음표·따옴표를 붙이지 마세요.
+2. 질문의 핵심 대상과 행위를 남기세요. "질문", "문의", "관련 문의"처럼 내용이 없는 말은 쓰지 마세요.
+   - "팀원을 어떻게 추가해?" -> "팀원 추가 방법"
+   - "스프린트 기간 최대 몇 주까지 돼?" -> "스프린트 최대 기간"
+   - "PR 연동이 자꾸 끊겨요" -> "PR 연동 오류"
+3. 여러 주제가 섞여 있으면 가장 중심이 되는 것 하나만 담으세요.
+4. 인사·잡담이라 주제라고 할 것이 없으면 "새 대화"로 하세요.
+
+[JSON 응답 형식]
+{"title": "팀원 추가 방법"}
 """
 
 
@@ -139,3 +168,49 @@ def transform_user_query(
             search_queries=[raw_query],
             needs_search=True
         )
+
+
+# ---------------------------------------------------------------------------
+# 대화 제목
+# ---------------------------------------------------------------------------
+
+def _fallback_title(raw_query: str) -> str:
+    """LLM 없이 만드는 제목. 원문을 줄여 쓴다 — 없는 것보다 낫고, 틀릴 수도 없다."""
+    text = " ".join((raw_query or "").split())
+    if not text:
+        return _DEFAULT_TITLE
+    if len(text) <= _TITLE_MAX_CHARS:
+        return text
+    return text[: _TITLE_MAX_CHARS - 1] + "…"
+
+
+def generate_conversation_title(raw_query: str, model_name: str = "gpt-4o-mini") -> str:
+    """
+    첫 질문으로 대화 목록에 걸 제목을 만든다. 첫 턴에서만 부른다.
+
+    정제된 질문(cleaned_query)이 아니라 원문을 넣는다. 제목은 사용자가 자기 대화를
+    알아보는 용도라 재작성이 고른 "중심 주제"보다 실제로 물어본 말에 가까워야 하고,
+    이렇게 두면 재작성이 실패해도 제목은 멀쩡하다(두 호출이 서로 독립적이다).
+
+    실패해도 예외를 올리지 않는다 — 제목 때문에 답변까지 실패시킬 이유가 없다.
+    """
+    load_dotenv()
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+    try:
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": _TITLE_SYSTEM_PROMPT.strip()},
+                {"role": "user", "content": f"사용자 질문: {raw_query}"},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.2,
+        )
+
+        title = json.loads(response.choices[0].message.content).get("title", "")
+        title = " ".join(str(title).split()).strip("\"'“”‘’ ")
+        return title[:_TITLE_MAX_CHARS] if title else _fallback_title(raw_query)
+
+    except Exception:
+        return _fallback_title(raw_query)

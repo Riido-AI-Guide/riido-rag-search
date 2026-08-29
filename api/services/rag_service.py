@@ -12,7 +12,7 @@ from typing import List, Optional
 from dto import AnswerEvaluation, ConversationTurn, RetrievedChunk, SearchHit
 from evaluator import EvaluationError, evaluate_faithfulness
 from llm import generate_rag_answer
-from query_transform import transform_user_query
+from query_transform import generate_conversation_title, transform_user_query
 from rag_search import search as rag_search
 
 logger = logging.getLogger(__name__)
@@ -37,6 +37,10 @@ class AskResult:
     conversation_id: Optional[str] = None
     history_turns_used: int = 0
 
+    # 대화 목록에 걸 제목. 첫 턴에서만 채우고 후속 턴은 빈 문자열이다.
+    # Query.conversation_title을 그대로 실어 나른다(값의 주인은 그쪽이다).
+    title: str = ""
+
     @property
     def doc_ids(self) -> List[str]:
         return [d.doc_id for d in self.documents]
@@ -59,12 +63,27 @@ def ask(
 
     conversation_id는 처리에 쓰지 않는다. 대화의 소유자는 백엔드이고 여기서는
     응답·로그에 실어 보내기만 한다(운영 콘솔에서 평가와 대화를 잇는 조인 키).
+
+    첫 턴이면 대화 제목을 하나 만들어 함께 돌려준다(LLM 호출 1회 추가).
     """
     # 최근 턴만 남긴다. 요청이 더 많이 보내와도 서버 정책이 상한이다.
     # (오래된 턴은 지나간 주제로 재작성을 오염시키고 비용만 늘린다)
     recent_history = (history or [])[-max_history_turns:] if max_history_turns > 0 else []
 
     transformed = transform_user_query(query, history=recent_history)
+
+    # 제목은 첫 턴에서만 만든다. history도 conversation_id도 없는 요청이 곧 첫 턴이라는
+    # 게 /ask의 계약이다(AskRequest 참고). 자르기 전 history로 판단한다 —
+    # max_history_turns=0으로 recent_history가 비어도 그건 첫 턴이 아니다.
+    #
+    # 후속 턴에 다시 만들지 않는 이유: 백엔드가 이미 저장한 제목을 매 턴 덮어쓸지
+    # 말지 판단해야 하고, 대화가 길어질수록 제목이 흔들린다. 빈 문자열을 내려
+    # "바꿀 것 없음"을 뜻하게 하는 편이 계약이 단순하다.
+    #
+    # 인사·잡담(needs_search=False)이어도 만든다 — 백엔드는 그 턴에도 대화를 만들고,
+    # 제목 없는 대화가 목록에 남는다. 그런 질문에는 "새 대화"가 돌아온다.
+    if not history and not conversation_id:
+        transformed.conversation_title = generate_conversation_title(query)
 
     # 인사·잡담이면 검색도 생성도 하지 않는다
     if not transformed.needs_search:
@@ -75,6 +94,7 @@ def ask(
             answer=NO_SEARCH_FOLLOW_UP_MESSAGE if recent_history else NO_SEARCH_MESSAGE,
             conversation_id=conversation_id,
             history_turns_used=len(recent_history),
+            title=transformed.conversation_title,
         )
 
     # 검색과 생성에는 재작성된 질문만 넘긴다.
@@ -109,6 +129,7 @@ def ask(
         evaluation=evaluation,
         conversation_id=conversation_id,
         history_turns_used=len(recent_history),
+        title=transformed.conversation_title,
     )
 
 

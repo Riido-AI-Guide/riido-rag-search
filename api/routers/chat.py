@@ -29,7 +29,8 @@ router = APIRouter(tags=["chat"])
     description=(
         "질문 정제 → 하이브리드 검색 → 답변 생성. 근거 문서는 항상 함께 반환한다.\n\n"
         "이전 대화를 history로 함께 보내면 후속 질문의 대명사·생략을 앞 턴에서 풀어 검색한다. "
-        "첫 대화면 history와 conversation_id를 생략하면 되고, 그때는 단일턴과 동일하게 동작한다."
+        "첫 대화면 history와 conversation_id를 생략하면 되고, 그때는 단일턴과 동일하게 동작한다.\n\n"
+        "첫 대화일 때만 대화 제목을 만들어 title로 함께 돌려준다. 후속 턴의 title은 빈 문자열이다."
     ),
 )
 def ask(req: AskRequest, settings: Settings = Depends(get_settings)) -> AskResponse:
@@ -52,6 +53,7 @@ def ask(req: AskRequest, settings: Settings = Depends(get_settings)) -> AskRespo
         needs_search=result.needs_search,
         conversation_id=result.conversation_id,
         history_turns_used=result.history_turns_used,
+        title=result.title,
         answer=result.answer,
         doc_ids=result.doc_ids,
         documents=[AnswerUnitOut.from_domain(d) for d in result.documents],
