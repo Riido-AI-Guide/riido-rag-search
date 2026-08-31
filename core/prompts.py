@@ -1,17 +1,14 @@
 """
-prompt.py — 답변 생성 프롬프트 조립
-
-system 프롬프트와 user 프롬프트를 모두 여기서 만든다.
-(예전에는 system이 llm.py에 상수로 박혀 있어 프롬프트가 두 파일에 흩어져 있었다)
+core/prompts.py — 답변 생성 프롬프트 조립
 """
 
 from typing import List, Tuple
 
-from dto import RetrievedChunk
+from domain import RetrievedChunk
 
 
 # ---------------------------------------------------------------------------
-# 섹션 라벨 — 프론트가 이 값으로 스타일을 정하므로 고정한다
+# 섹션 라벨
 # ---------------------------------------------------------------------------
 
 SECTION_LABELS = {
@@ -109,7 +106,7 @@ RAG_USER_PROMPT_TEMPLATE = """\
 
 
 def _format_documents(documents: List[RetrievedChunk]) -> str:
-    """검색된 문서를 [문서 N] 형식으로 직렬화. N이 곧 sourceIds의 값이 된다."""
+    """검색된 문서를 [문서 N] 형식으로 직렬화"""
     if not documents:
         return "참고할 수 있는 관련 문서가 없습니다."
 

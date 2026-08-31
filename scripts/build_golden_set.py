@@ -1,5 +1,5 @@
 """
-golden_set_builder.py — 검색 평가용 골든셋(질문-정답 문서 쌍) 만들기
+scripts/build_golden_set.py — 검색 평가용 골든셋(질문-정답 문서 쌍) 만들기
 
 재료:
 - 질문: qa_reviewed_20260804.json (실제 고객 상담 100건, 마스킹·수기검수 완료)
@@ -8,14 +8,14 @@ golden_set_builder.py — 검색 평가용 골든셋(질문-정답 문서 쌍) �
 
 흐름 (2단계):
 1) propose  — LLM이 상담 질문마다 정답 문서 후보를 제안 → 검수용 CSV 출력
-              python golden_set_builder.py propose
+              python -m scripts.build_golden_set propose
 2) (사람)   — golden_labels_review.csv를 열어 '검수' 열만 채운다
               비워둠 = 제안 그대로 승인 / doc_id 입력 = 정답 교체 / "제외" = 골든셋에서 뺌
 3) finalize — 검수 반영해서 golden_set.json 확정 (source="real")
-              python golden_set_builder.py finalize
+              python -m scripts.build_golden_set finalize
 4) synthesize — 상담 질문이 커버하지 못한 문서들에 대해 원문에서
               고객 말투 질문을 생성해 골든셋에 보충 (source="synthetic")
-              python golden_set_builder.py synthesize
+              python -m scripts.build_golden_set synthesize
 
 실사용(real)과 합성(synthetic)을 태그로 구분해두므로 평가 때 두 셋의
 점수를 따로 볼 수 있다. 대표 숫자는 real, 문서 커버리지 확인은 synthetic.
@@ -31,29 +31,22 @@ import sys
 import json
 from typing import Dict, List
 
-import psycopg2
 import psycopg2.extras
-from dotenv import load_dotenv
 from openai import OpenAI
 
-load_dotenv()
+from core.config import OPENAI_API_KEY
+from core.db import connect
+from scripts.paths import DATA_DIR
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "dbname=riido user=postgres password=postgres host=localhost port=5432",
-)
 
-QA_PATH = "./qa_reviewed_20260804.json"
-DRAFT_PATH = "./golden_labels_draft.json"     # LLM 제안 캐시
-REVIEW_PATH = "./golden_labels_review.csv"    # 사람이 검수하는 파일
-GOLDEN_PATH = "./golden_set.json"             # 최종 골든셋
+
+QA_PATH = DATA_DIR / "qa_reviewed_20260804.json"
+DRAFT_PATH = DATA_DIR / "golden_labels_draft.json"     # LLM 제안 캐시
+REVIEW_PATH = DATA_DIR / "golden_labels_review.csv"    # 사람이 검수하는 파일
+GOLDEN_PATH = DATA_DIR / "golden_set.json"             # 최종 골든셋
 
 LABEL_MODEL = os.getenv("GOLDEN_LABEL_MODEL", "gpt-4o")
 ANSWER_SNIPPET_CHARS = 1500  # 상담 답변은 앞부분만 잘라서 프롬프트에 넣는다
-
-
-def get_connection():
-    return psycopg2.connect(DATABASE_URL)
 
 
 # ---------------------------------------------------------------------------
@@ -68,14 +61,14 @@ def load_qa_items() -> List[Dict]:
 
 def fetch_doc_catalog() -> List[Dict]:
     """answer_units에서 정답 후보 문서 목록(doc_id, title, section)을 가져온다."""
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("SELECT doc_id, title, section FROM answer_units ORDER BY doc_id;")
     rows = cur.fetchall()
     cur.close()
     conn.close()
     if not rows:
-        raise RuntimeError("answer_units가 비어 있습니다. answer_builder.py를 먼저 실행하세요.")
+        raise RuntimeError("answer_units가 비어 있습니다. python -m scripts.build_answer_units를 먼저 실행하세요.")
     return rows
 
 
@@ -166,7 +159,7 @@ def question_preview(text: str, limit: int = 150) -> str:
 
 
 def run_propose() -> None:
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    client = OpenAI(api_key=OPENAI_API_KEY)
     items = load_qa_items()
     catalog = fetch_doc_catalog()
     catalog_str = catalog_text(catalog)
@@ -219,7 +212,7 @@ def run_propose() -> None:
     print(f"   답변가능 후보 {n_answerable}개 / 제외 후보 {len(rows) - n_answerable}개")
     print("   → 엑셀로 열어 '검수' 열만 채우세요:")
     print("     비워둠 = 제안 승인 / 다른 doc_id 입력 = 정답 교체 / '제외' = 골든셋에서 뺌")
-    print("   → 끝나면: python golden_set_builder.py finalize")
+    print("   → 끝나면: python -m scripts.build_golden_set finalize")
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +313,7 @@ def run_finalize(max_per_doc: int = 3) -> None:
 # 3) synthesize — 상담이 커버하지 못한 문서에 대해 원문에서 질문 생성
 # ---------------------------------------------------------------------------
 
-VIEW_SENTENCES_PATH = "./rag_view_sentences.json"
+VIEW_SENTENCES_PATH = DATA_DIR / "rag_view_sentences.json"
 DOC_CONTENT_CHARS = 2000  # 문서 원문은 앞부분만 프롬프트에 넣는다
 
 SYNTH_SYSTEM_PROMPT = """
@@ -355,7 +348,7 @@ def run_synthesize(per_doc: int = 1) -> None:
             for row in json.load(f):
                 index_sentences.setdefault(row["doc_id"], []).append(row["text"])
 
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("SELECT doc_id, title, section, content FROM answer_units ORDER BY doc_id;")
     docs = cur.fetchall()
@@ -368,7 +361,7 @@ def run_synthesize(per_doc: int = 1) -> None:
         print("   보충할 문서가 없습니다.")
         return
 
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    client = OpenAI(api_key=OPENAI_API_KEY)
     added = 0
     for i, doc in enumerate(targets, 1):
         existing = "\n".join(f"- {t}" for t in index_sentences.get(doc["doc_id"], [])) or "(없음)"
@@ -417,12 +410,12 @@ if __name__ == "__main__":
     if mode == "propose":
         run_propose()
     elif mode == "finalize":
-        # 문서당 최대 질문 수. 예: python golden_set_builder.py finalize 5 / 제한 없애려면 0
+        # 문서당 최대 질문 수. 예: python -m scripts.build_golden_set finalize 5 / 제한 없애려면 0
         cap = int(sys.argv[2]) if len(sys.argv) > 2 else 3
         run_finalize(max_per_doc=cap)
     elif mode == "synthesize":
-        # 문서당 생성할 질문 수. 예: python golden_set_builder.py synthesize 2
+        # 문서당 생성할 질문 수. 예: python -m scripts.build_golden_set synthesize 2
         n = int(sys.argv[2]) if len(sys.argv) > 2 else 1
         run_synthesize(per_doc=n)
     else:
-        print("사용법: python golden_set_builder.py [propose|finalize [문서당_최대]|synthesize [문서당_생성수]]")
+        print("사용법: python -m scripts.build_golden_set [propose|finalize [문서당_최대]|synthesize [문서당_생성수]]")

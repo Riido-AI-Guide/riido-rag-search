@@ -1,44 +1,43 @@
 """
-search_builder.py — 검색용 테이블(search_units) 빌드
+scripts/build_search_units.py — 검색용 테이블(search_units) 빌드
 
 rag_view_sentences.json(가설질문·실제질문·맥락요약 문장)을 검색 단위로 적재한다.
 - 문장 1개 = 검색 단위 1행. 답변 본문은 answer_units에 있고 여기엔 doc_id만 둔다.
-- 키워드 검색: Kiwi로 명사/동사/형용사만 뽑아 to_tsvector('simple', ...)  (rag_search.py와 동일)
+- 키워드 검색: Kiwi로 명사/동사/형용사만 뽑아 to_tsvector('simple', ...)  (core/search.py와 동일)
 - 벡터 검색: OpenAI text-embedding-3-small
 - 이미 적재된 문장은 다시 임베딩하지 않는다(증분). JSON에서 빠진 문장은 정리한다.
 """
 
-import os
 import json
 import time
+from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
-import psycopg2
 import psycopg2.extras
-from dotenv import load_dotenv
 from langchain_openai import OpenAIEmbeddings
 from kiwipiepy import Kiwi
 
-from dto import SearchChunk
-from answer_builder import setup_answer_table
+from core.config import OPENAI_API_KEY
+from core.db import connect
+from domain import SearchChunk
+from scripts.paths import DATA_DIR
+from scripts.build_answer_units import setup_answer_table
 
-load_dotenv()
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "dbname=riido user=postgres password=postgres host=localhost port=5432",
-)
 
-VIEW_SENTENCES_PATH = "./rag_view_sentences.json"
+VIEW_SENTENCES_PATH = DATA_DIR / "rag_view_sentences.json"
 EMBED_BATCH_SIZE = 90
 EMBED_SLEEP_SEC = 5
 
+# core/search.py와 같은 이유로 키 존재를 먼저 확인한다
+# (OpenAIEmbeddings가 환경변수를 직접 읽는다).
+if not OPENAI_API_KEY:
+    raise RuntimeError(
+        "OPENAI_API_KEY가 설정되지 않았습니다. .env를 확인하세요 (.env.example 참고)."
+    )
+
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 kiwi = Kiwi()
-
-
-def get_connection():
-    return psycopg2.connect(DATABASE_URL)
 
 
 def extract_keywords(text: str) -> str:
@@ -56,7 +55,7 @@ def setup_search_table(embedding_dim: int) -> None:
     """search_units 생성. doc_id는 answer_units를 참조하고 답변이 지워지면 함께 정리된다."""
     setup_answer_table()  # FK 대상 테이블 보장
 
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
     cur.execute(f"""
@@ -84,7 +83,7 @@ def setup_search_table(embedding_dim: int) -> None:
 # 2) JSON 로드
 # ---------------------------------------------------------------------------
 
-def load_view_sentences(json_path: str = VIEW_SENTENCES_PATH) -> List[SearchChunk]:
+def load_view_sentences(json_path: Path = VIEW_SENTENCES_PATH) -> List[SearchChunk]:
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -117,7 +116,7 @@ def load_view_sentences(json_path: str = VIEW_SENTENCES_PATH) -> List[SearchChun
 # ---------------------------------------------------------------------------
 
 def fetch_existing_keys() -> Set[Tuple[str, str]]:
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     cur.execute("SELECT doc_id, text FROM search_units;")
     keys = {(row[0], row[1]) for row in cur.fetchall()}
@@ -127,7 +126,7 @@ def fetch_existing_keys() -> Set[Tuple[str, str]]:
 
 
 def fetch_known_doc_ids() -> Set[str]:
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     cur.execute("SELECT doc_id FROM answer_units;")
     doc_ids = {row[0] for row in cur.fetchall()}
@@ -140,7 +139,7 @@ def embed_and_store(chunks: List[SearchChunk], batch_size: int = EMBED_BATCH_SIZ
     if not chunks:
         return
 
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
 
     for i in range(0, len(chunks), batch_size):
@@ -175,7 +174,7 @@ def prune_removed(keep_keys: Set[Tuple[str, str]]) -> int:
     if not stale:
         return 0
 
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     psycopg2.extras.execute_batch(
         cur,
@@ -192,7 +191,7 @@ def prune_removed(keep_keys: Set[Tuple[str, str]]) -> int:
 # 4) 오케스트레이션
 # ---------------------------------------------------------------------------
 
-def build_search_units(json_path: str = VIEW_SENTENCES_PATH) -> None:
+def build_search_units(json_path: Path = VIEW_SENTENCES_PATH) -> None:
     sample_vector = embeddings.embed_query("테스트")
     setup_search_table(embedding_dim=len(sample_vector))
 
@@ -202,7 +201,7 @@ def build_search_units(json_path: str = VIEW_SENTENCES_PATH) -> None:
     known_doc_ids = fetch_known_doc_ids()
     if not known_doc_ids:
         raise RuntimeError(
-            "answer_units가 비어 있습니다. answer_builder.py를 먼저 실행하세요."
+            "answer_units가 비어 있습니다. python -m scripts.build_answer_units를 먼저 실행하세요."
         )
 
     orphans = [c for c in chunks if c.doc_id not in known_doc_ids]
@@ -227,7 +226,7 @@ def build_search_units(json_path: str = VIEW_SENTENCES_PATH) -> None:
 
 
 def print_stats() -> None:
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
         SELECT view_type,
@@ -245,14 +244,14 @@ def print_stats() -> None:
 # ---------------------------------------------------------------------------
 # 원문 키워드·벡터 인덱스 (answer_content_vectors)
 #   분리혼합 검색의 키워드 검색 대상. rag_search.content_keyword_search가 사용한다.
-#   (2차 평가 evaluate_search_split.py에서 검증된 구조를 정식 편입)
+#   (2차 평가 scripts/evaluate_search.py에서 검증된 구조를 정식 편입)
 # ---------------------------------------------------------------------------
 
 CONTENT_EMBED_CHARS = 8000  # 임베딩 입력 안전 상한 (모델 한도 초과 방지)
 
 
 def setup_content_table(embedding_dim: int) -> None:
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     cur.execute(f"""
         CREATE TABLE IF NOT EXISTS answer_content_vectors (
@@ -271,13 +270,13 @@ def build_content_vectors() -> None:
     """answer_units 원문을 임베딩·색인해서 채운다. 이미 된 문서는 건너뛴다(증분).
 
     주의: 원문 content가 수정된 문서는 자동 갱신되지 않는다.
-    answer_builder가 변경 doc_id를 반환하므로, 대량 수정 시에는 해당 doc_id 행을
+    build_answer_units가 변경 doc_id를 반환하므로, 대량 수정 시에는 해당 doc_id 행을
     지우고 다시 실행하면 된다 (삭제된 문서는 FK CASCADE로 자동 정리).
     """
     dim = len(embeddings.embed_query("차원 확인"))
     setup_content_table(dim)
 
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
         SELECT a.doc_id, a.content

@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List
 
-from dto import SearchHit
+from domain import SearchHit
 
 
 @dataclass

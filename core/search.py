@@ -1,10 +1,10 @@
 """
-rag_search.py — 검색 모듈 (분리혼합 하이브리드)
+core/search.py — 검색 모듈 (분리혼합 하이브리드)
 
 - 벡터 검색: search_units (가설질문/실제질문/맥락요약 문장 단위)
 - 키워드 검색: answer_content_vectors (가이드 원문 단위)
   질문 문장은 담긴 단어가 적어 키워드 매칭이 빈약하지만, 원문은 단어가
-  풍부해 잘 걸린다. 2차 평가에서 이 조합이 전 지표 우위(evaluate_search_split.py).
+  풍부해 잘 걸린다. 2차 평가에서 이 조합이 전 지표 우위(scripts/evaluate_search.py).
 - 두 순위를 문서 단위 RRF로 결합해 top-k 문서를 뽑고,
   answer_units에서 답변 본문을 가져온다
 - 임베딩: OpenAI text-embedding-3-small
@@ -17,11 +17,25 @@ import psycopg2.errors
 from langchain_openai import OpenAIEmbeddings
 from kiwipiepy import Kiwi
 
-from db import get_cursor
-from dto import RetrievedChunk, SearchHit
+from core.config import OPENAI_API_KEY
+from core.db import get_cursor
+from domain import RetrievedChunk, SearchHit
+
+
+if not OPENAI_API_KEY:
+    raise RuntimeError(
+        "OPENAI_API_KEY가 설정되지 않았습니다. .env를 확인하세요 (.env.example 참고)."
+    )
 
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 kiwi = Kiwi()
+
+
+def warmup() -> None:
+    """
+    Kiwi와 임베딩 클라이언트를 미리 만들어 둔다. 
+    (첫 호출 시 Kiwi가 모델을 로드하고, 임베딩 클라이언트가 OpenAI 서버와 연결하는 데 시간이 걸린다)
+    """
 
 
 def extract_keywords(text: str) -> str:
@@ -31,7 +45,6 @@ def extract_keywords(text: str) -> str:
 
 
 # 질문에 흔히 섞이는 기능어 어간. 인덱스에는 남겨두고 질의에서만 뺀다
-# ("어떻게 해?"의 '어떻'·'하'가 OR에 들어가면 무관한 문장이 대량으로 딸려온다)
 QUERY_STOPWORDS = {
     "하", "되", "있", "없", "수", "것", "거", "등", "때", "좀",
     "어떻", "어떠", "같", "이", "그", "저", "무엇", "뭐",
@@ -90,8 +103,8 @@ def content_keyword_search(query: str, top_k: int = 20):
             """, (tsquery, tsquery, top_k))
             return cur.fetchall()
     except psycopg2.errors.UndefinedTable:
-        # 원문 인덱스가 아직 없으면 벡터 검색만으로 동작 (search_builder.py 실행 필요)
-        print("⚠️  answer_content_vectors 없음 — search_builder.py를 실행해 원문 인덱스를 구축하세요")
+        # 원문 인덱스가 아직 없으면 벡터 검색만으로 동작 (build_search_units 실행 필요)
+        print("⚠️  answer_content_vectors 없음 — python -m scripts.build_search_units로 원문 인덱스를 구축하세요")
         return []
 
 

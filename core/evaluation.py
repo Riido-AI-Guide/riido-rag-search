@@ -1,10 +1,12 @@
-import os
 import json
 from typing import List, Dict, Any, Optional
-from dotenv import load_dotenv
 from openai import OpenAI
 
-from dto import AnswerEvaluation
+from core.config import OPENAI_API_KEY
+from domain import AnswerEvaluation
+
+# 호출마다 만들면 매번 새 HTTP 커넥션 풀이 생겨 keep-alive를 못 쓴다.
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 class EvaluationError(RuntimeError):
@@ -25,9 +27,6 @@ def evaluate_faithfulness(
     """
     LLM-as-a-Judge 기법을 사용하여 생성된 답변이 검색된 문서에만 근거하는지(환각 여부) 검증합니다.
     """
-    load_dotenv()
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    
     # 문서마다 [참고 문서 N] 번호를 붙인다.
     # 프롬프트가 "어느 문서에서 근거를 얻었는지" 번호로 답하게 시키므로,
     # 번호 없이 이어붙이면 평가자가 지킬 수 없는 지시가 된다.

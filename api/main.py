@@ -14,25 +14,24 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api.config import get_settings
-from db import close_pool, init_pool
+from api.settings import get_settings
+from core.db import close_pool, init_pool
 from api.routers import answer_units, chat, health, search_units
-from llm import LlmError
+from core.generation import LlmError
 
 logger = logging.getLogger("api")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    settings = get_settings()
-    # rag_search와 API 조회가 같은 풀을 쓴다 (db.py). 여기서 미리 만들어 두지 않으면
-    # 첫 사용 시 지연 초기화되므로 크기 설정이 반영되지 않는다.
-    init_pool(settings.database_url, settings.db_pool_min, settings.db_pool_max)
+    # 첫 요청이 풀 생성 비용을 떠안지 않도록 미리 풀을 만든다
+    init_pool()
 
-    # rag_search는 import 시점에 Kiwi와 임베딩 클라이언트를 만든다(수 초 소요).
+    # core.search는 로드 시점에 Kiwi와 임베딩 클라이언트를 만든다(수 초 소요).
     # 첫 요청이 이 비용을 떠안지 않도록 부팅 때 미리 끌어올린다.
     started = time.perf_counter()
-    import rag_search  # noqa: F401
+    from core.search import warmup  # 최상단에 두면 로드 비용이 부팅 전으로 앞당겨진다
+    warmup()
     logger.info("검색 모듈 로드 완료 (%.1fs)", time.perf_counter() - started)
 
     yield
@@ -62,18 +61,18 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(psycopg2.errors.UndefinedTable)
     async def undefined_table_handler(request: Request, exc: psycopg2.errors.UndefinedTable):
-        """인덱스가 아직 없을 때 500 대신 원인을 알려준다"""
+        """인덱스가 아직 없을 때"""
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={
                 "detail": "인덱스 테이블이 없습니다.",
-                "hint": "answer_builder.py → search_builder.py 순으로 실행하세요.",
+                "hint": "python -m scripts.build_answer_units → python -m scripts.build_search_units 순으로 실행하세요.",
             },
         )
 
     @app.exception_handler(LlmError)
     async def llm_error_handler(request: Request, exc: LlmError):
-        """답변 생성 실패를 200 OK로 내보내지 않는다"""
+        """답변 생성 실패"""
         logger.exception("답변 생성 실패")
         return JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY,

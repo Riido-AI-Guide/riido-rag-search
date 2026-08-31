@@ -1,5 +1,5 @@
 """
-evaluate_search_split.py — 검색 평가 본체 (2차: 혼합 하이브리드 개선안 검증)
+scripts/evaluate_search.py — 검색 평가 본체 (2차: 혼합 하이브리드 개선안 검증)
 
 golden_set.json(질문 → 정답 doc_id)으로 검색 품질을 Hit@1 / Hit@3 / MRR로 채점한다.
 
@@ -26,7 +26,7 @@ golden_set.json(질문 → 정답 doc_id)으로 검색 품질을 Hit@1 / Hit@3 /
 - 콘솔: 방식×(전체/real/synthetic) 요약 표
 - eval_results.csv: 질문별 상세 (순위 + 실제 top-3 목록) — 실패 사례 분석용
 
-실행: python evaluate_search_split.py
+실행: python -m scripts.evaluate_search
 """
 
 import os
@@ -39,17 +39,15 @@ import psycopg2.extras
 from openai import OpenAI
 
 # 프로덕션 검색 코드를 그대로 재사용한다 — "평가한 것 = 실제 시스템"을 보장
-from db import DATABASE_URL
-from rag_search import embeddings, extract_keywords, build_tsquery, vector_search
+from core.config import OPENAI_API_KEY
+from core.db import connect
+from core.search import embeddings, extract_keywords, build_tsquery, vector_search
+from scripts.paths import DATA_DIR
 
 
-def get_connection():
-    """평가 스크립트 전용 단순 커넥션 (프로덕션은 db.py 풀 사용)"""
-    return psycopg2.connect(DATABASE_URL)
-
-GOLDEN_PATH = "./golden_set.json"
-TRANSFORM_CACHE_PATH = "./eval_transform_cache.json"
-RESULTS_CSV_PATH = "./eval_results.csv"
+GOLDEN_PATH = DATA_DIR / "golden_set.json"
+TRANSFORM_CACHE_PATH = DATA_DIR / "eval_transform_cache.json"
+RESULTS_CSV_PATH = DATA_DIR / "eval_results.csv"
 
 TOP_K = 10           # 이 순위까지 정답을 찾는다 (MRR 계산 범위)
 RRF_K = 30           # RRF 파라미터 (rag_search 프로덕션 기본값과 동일)
@@ -66,7 +64,7 @@ QUESTION_CLEAN_MODEL = "gpt-4o-mini"
 # ---------------------------------------------------------------------------
 
 def setup_content_table(dim: int) -> None:
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     cur.execute(f"""
         CREATE TABLE IF NOT EXISTS answer_content_vectors (
@@ -86,7 +84,7 @@ def build_content_vectors() -> None:
     dim = len(embeddings.embed_query("차원 확인"))
     setup_content_table(dim)
 
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute("""
         SELECT a.doc_id, a.content
@@ -122,7 +120,7 @@ def build_content_vectors() -> None:
 def content_vector_docs(query: str, top_k: int = 20) -> List[str]:
     """원문 벡터 검색 → 문서 순위"""
     qv = embeddings.embed_query(query)
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     cur.execute("""
         SELECT doc_id FROM answer_content_vectors
@@ -138,7 +136,7 @@ def content_keyword_docs(query: str, top_k: int = 20) -> List[str]:
     tsq = build_tsquery(extract_keywords(query))
     if not tsq:
         return []
-    conn = get_connection()
+    conn = connect()
     cur = conn.cursor()
     cur.execute("""
         SELECT doc_id FROM answer_content_vectors
@@ -206,7 +204,7 @@ _client = None
 def to_question_form(raw: str) -> str:
     global _client
     if _client is None:
-        _client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        _client = OpenAI(api_key=OPENAI_API_KEY)
     try:
         res = _client.chat.completions.create(
             model=QUESTION_CLEAN_MODEL,
@@ -300,7 +298,7 @@ MODES = [MODE_SPLIT, MODE_CONTENT]
 
 def main() -> None:
     if not os.path.exists(GOLDEN_PATH):
-        raise RuntimeError(f"{GOLDEN_PATH}가 없습니다. golden_set_builder.py를 먼저 완료하세요.")
+        raise RuntimeError(f"{GOLDEN_PATH}가 없습니다. python -m scripts.build_golden_set을 먼저 완료하세요.")
     with open(GOLDEN_PATH, "r", encoding="utf-8") as f:
         golden = json.load(f)
     n_real = sum(1 for g in golden if g.get("source") == "real")

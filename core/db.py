@@ -1,29 +1,30 @@
 """
-db.py — 공용 PostgreSQL 커넥션 풀
+core/db.py — PostgreSQL 접속 설정과 커넥션 풀
 
-rag_search와 API 계층이 같은 풀을 공유한다.
-- FastAPI: lifespan에서 init_pool() / close_pool()로 명시적으로 관리
-- 스크립트(python rag_search.py 등): 첫 사용 시 지연 초기화되므로 별도 준비가 필요 없다
+커넥션을 얻는 방법 두 가지
+- get_connection() / get_cursor(): 풀에서 빌려 쓴다. 요청 처리용.
+  FastAPI는 lifespan에서 init_pool()/close_pool()로 관리하고,
+  스크립트에서 core.search를 직접 부르면 첫 사용 시 지연 초기화된다.
+- connect(): 풀을 거치지 않는 독립 커넥션. 인덱스 빌드 같은 배치용.
 """
 
-import os
 import threading
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Iterator, Optional
+from typing import Optional
 
 import psycopg2.extras
-from dotenv import load_dotenv
 from psycopg2.pool import ThreadedConnectionPool
 
-load_dotenv()
+from core.config import DATABASE_URL, DEFAULT_MAX_CONN, DEFAULT_MIN_CONN
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "dbname=riido user=postgres password=postgres host=localhost port=5432",
-)
 
-DEFAULT_MIN_CONN = 1
-DEFAULT_MAX_CONN = 10
+def connect() -> "psycopg2.extensions.connection":
+    """
+    풀을 거치지 않는 독립 커넥션. 호출자가 close()를 책임진다.
+    """
+    return psycopg2.connect(DATABASE_URL)
+
 
 _pool: Optional[ThreadedConnectionPool] = None
 _lock = threading.Lock()
@@ -56,7 +57,7 @@ def _require_pool() -> ThreadedConnectionPool:
 
 
 @contextmanager
-def get_connection() -> Iterator["psycopg2.extensions.connection"]:
+def get_connection() -> Generator["psycopg2.extensions.connection", None, None]:
     """풀에서 커넥션을 빌리고 블록을 벗어나면 반납한다 (닫지 않는다)."""
     pool = _require_pool()
     conn = pool.getconn()
@@ -71,7 +72,7 @@ def get_connection() -> Iterator["psycopg2.extensions.connection"]:
 
 
 @contextmanager
-def get_cursor(conn=None) -> Iterator[psycopg2.extras.RealDictCursor]:
+def get_cursor(conn=None) -> Generator[psycopg2.extras.RealDictCursor, None, None]:
     """
     RealDictCursor 컨텍스트.
 
