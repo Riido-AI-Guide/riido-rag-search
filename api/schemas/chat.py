@@ -6,7 +6,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from domain import ConversationTurn
+from domain import AnswerSection, ConversationTurn, SourceRef
 from api.schemas.units import AnswerUnitOut
 
 
@@ -60,6 +60,34 @@ class AskRequest(BaseModel):
     )
 
 
+class SourceRefOut(BaseModel):
+    """섹션 하나가 근거로 삼은 문서 1건"""
+    doc_id: str = Field(description="답변 단위 식별자", examples=["guide/휴지통/복구-및-영구-삭제"])
+    section: str = Field(description="문서 경로. 화면에 그대로 표시한다", examples=["휴지통 > 복구 및 영구 삭제"])
+
+    @classmethod
+    def from_domain(cls, ref: SourceRef) -> "SourceRefOut":
+        return cls(doc_id=ref.doc_id, section=ref.section)
+
+
+class AnswerSectionOut(BaseModel):
+    """답변을 이루는 한 덩어리. 프론트는 이 단위로 렌더하고 sources를 근거 버튼으로 단다"""
+    label: str = Field(description="섹션 이름(핵심답변/단계별방법 …). 프론트가 이 값으로 스타일을 정한다")
+    text: str
+    sources: List[SourceRefOut] = Field(
+        default_factory=list,
+        description="이 섹션의 근거 문서. 문서 안에서 중복은 제거돼 있고, 근거가 없으면 빈 배열",
+    )
+
+    @classmethod
+    def from_domain(cls, sec: AnswerSection) -> "AnswerSectionOut":
+        return cls(
+            label=sec.label,
+            text=sec.text,
+            sources=[SourceRefOut.from_domain(r) for r in sec.sources],
+        )
+
+
 class AskResponse(BaseModel):
     raw_query: str = Field(description="사용자가 보낸 원문")
     cleaned_query: str = Field(
@@ -73,24 +101,54 @@ class AskResponse(BaseModel):
     conversation_id: Optional[str] = Field(
         default=None, description="요청에 담겨 온 값을 그대로 돌려준다(로그 대조용)"
     )
-    history_turns_used: int = Field(
-        default=0, description="재작성에 실제로 사용한 이전 턴 수. 0이면 첫 턴처럼 처리했다는 뜻"
-    )
-
     title: str = Field(
-        default="",
         description=(
-            "대화 제목. **첫 턴에서만** 채워서 보낸다(history와 conversation_id가 둘 다 "
-            "없는 요청). 후속 턴이면 빈 문자열이며, 이는 \"제목을 바꾸지 말라\"는 뜻이다 — "
-            "빈 문자열로 대화 제목을 덮어쓰지 말 것. 제목 생성에 실패해도 빈 값이 아니라 "
-            "질문 원문을 줄인 값이나 \"새 대화\"가 온다."
+            "이 턴의 제목. **매 턴 채워진다.** 답변 생성이 만든 제목을 그대로 쓰므로 "
+            "제목 때문에 LLM을 더 부르지 않는다.\n\n"
+            "쓰임이 둘이다 — 첫 턴이면 이 값을 **대화 제목으로 저장**하고, 그 뒤로는 "
+            "답변 말풍선 제목으로만 쓴다. **후속 턴의 title로 대화 제목을 덮어쓰지 말 것.** "
+            "매 턴 그 답변에 맞춰 달라지는 값이라 덮어쓰면 대화 제목이 계속 바뀐다. "
+            "첫 턴인지는 백엔드가 conversation_id를 보냈는지로 이미 알고 있다.\n\n"
+            "**첫 턴에서는 비지 않는다.** 답변에 제목이 없으면(no_answer, parse_error) "
+            "질문 원문을 줄인 값이, 인사·잡담(no_search)이면 \"새 대화\"가 온다. "
+            "빈 문자열은 후속 턴의 인사에서만 오며, 그때는 제목 없이 본문만 그리면 된다."
         ),
-        examples=["팀원 추가 방법"],
+        examples=["휴지통 복구 방법"],
     )
 
-    answer: str
-    doc_ids: List[str] = Field(description="답변의 근거가 된 answer_units 식별자")
+    answer_type: str = Field(
+        description=(
+            "답변 유형. 프론트가 레이아웃을 고르는 데 쓴다.\n\n"
+            "- 정상 답변: concept / step / judgement / troubleshoot / explore "
+            "— 유형마다 answers의 label 구성이 다르다\n"
+            "- no_answer: 검색은 했지만 근거 문서에 답이 없었다\n"
+            "- parse_error: LLM이 형식을 깨뜨려 라벨 없는 섹션 하나에 원문만 담겨 있다\n"
+            "- no_search: 인사·잡담이라 검색·생성을 건너뛰었다(needs_search=false)"
+        ),
+        examples=["step"],
+    )
+
+    answers: List[AnswerSectionOut] = Field(
+        description=(
+            "답변 본문. 섹션 단위로 렌더하고 각 섹션의 sources를 근거 버튼으로 단다. "
+            "어느 경로에서도 비지 않는다 — 인사·잡담이나 답변 형식이 깨진 경우에도 "
+            "label과 sources가 빈 섹션 하나에 텍스트가 담겨 온다.\n\n"
+            "평문 answer 필드는 두지 않는다. 이전 턴을 history로 되돌려 보낼 때 쓸 문자열은 "
+            "answers[].text를 이어붙여 만들면 된다(label은 넣지 말 것 — 재작성 프롬프트에 "
+            "들어가는 건 앞부분 일부라 라벨이 자리를 잡아먹는다)"
+        ),
+    )
+    doc_ids: List[str] = Field(
+        description=(
+            "답변이 실제로 인용한 answer_units 식별자. answers[].sources를 처음 등장한 "
+            "순서대로 합쳐 중복을 없앤 값이다. 검색됐지만 인용되지 않은 문서는 들어가지 않는다"
+        )
+    )
 
     documents: List[AnswerUnitOut] = Field(
-        default_factory=list, description="근거 문서 본문. 항상 포함한다"
+        default_factory=list,
+        description=(
+            "검색으로 가져온 문서 본문(top_k 전체). 인용되지 않은 문서도 들어 있으므로 "
+            "doc_ids의 상위집합이다. 화면에 근거로 표시할 것은 answers[].sources 쪽이다"
+        ),
     )

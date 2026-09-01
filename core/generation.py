@@ -87,8 +87,15 @@ def _parse_answer(raw: str, documents: List[RetrievedChunk]) -> Answer:
         )
 
     except (json.JSONDecodeError, ValueError, AttributeError, TypeError):
-        # 형식이 깨져도 내용은 살려서 돌려준다 (화면엔 통짜 텍스트로 표시)
-        return Answer(title="", answer_type="parse_error", sections=[], raw=raw)
+        # 형식이 깨져도 내용은 살린다. 라벨·근거가 없는 섹션 하나에 원문을 담아
+        # 소비자가 언제나 sections만 보면 되게 한다 — 빈 sections를 따로 분기할 필요가 없다.
+        # (label이 비었으므로 화면엔 통짜 텍스트로 표시된다)
+        return Answer(
+            title="",
+            answer_type="parse_error",
+            sections=[AnswerSection(label="", text=raw, sources=[])],
+            raw=raw,
+        )
 
 
 # ---------------------------------------------------------------------------
