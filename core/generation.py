@@ -47,7 +47,7 @@ def _resolve_sources(source_ids: Any, documents: List[RetrievedChunk]) -> List[S
         if doc.doc_id in seen:
             continue
         seen.add(doc.doc_id)
-        refs.append(SourceRef(doc_id=doc.doc_id, section=doc.section))
+        refs.append(SourceRef(doc_id=doc.doc_id, section=doc.section, url=doc.source_url))
 
     return refs
 

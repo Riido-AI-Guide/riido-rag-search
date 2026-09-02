@@ -67,9 +67,11 @@ api/
   "answer_type": "step",          // 프론트가 레이아웃을 고르는 값
   "answers": [                    // 답변 본문. 평문 answer 필드는 없다
     { "label": "핵심답변", "text": "팀 설정 > 멤버에서 초대할 수 있습니다.",
-      "sources": [{ "doc_id": "guide/멤버", "section": "멤버 > 멤버 초대" }] },
+      "sources": [{ "doc_id": "guide/멤버", "section": "멤버 > 멤버 초대",
+                    "url": "https://docs.riido.io/workspaces/members#undefined-1" }] },
     { "label": "주의사항", "text": "초대는 관리자만 할 수 있습니다.",
-      "sources": [{ "doc_id": "guide/멤버/권한", "section": "멤버 > 권한" }] }
+      "sources": [{ "doc_id": "guide/멤버/권한", "section": "멤버 > 권한",
+                    "url": "https://docs.riido.io/workspaces/members#undefined-3" }] }
   ],
   "doc_ids": ["guide/멤버", "guide/멤버/권한"],
   "documents": [...]
@@ -105,8 +107,15 @@ api/
 인사에서만 오고, 그때는 제목 없이 본문만 그리면 된다.
 
 **`answers`** — 답변을 이루는 덩어리와 그 덩어리의 근거다. 프론트는 덩어리 단위로 렌더하고
-`sources`를 문장 끝 근거 버튼으로 단다. 버튼 라벨에는 `section`("멤버 > 권한")을 쓴다 —
-`doc_id`는 슬러그라 화면에 그대로 쓸 값이 아니다. 근거가 없으면 `sources`가 빈 배열이다.
+`sources`를 문장 끝 근거 버튼으로 단다. 버튼 라벨에는 `section`("멤버 > 권한")을 쓰고,
+링크는 `url`로 건다 — `doc_id`는 슬러그고 `url`은 사람이 읽을 형태가 아니라
+(`#undefined-3`) 둘 다 화면에 그대로 쓸 값이 아니다. 근거가 없으면 `sources`가 빈 배열이다.
+
+`url`은 그 문서의 docs.riido.io 주소이고 가능하면 섹션 앵커까지 붙는다. 앵커를 못 붙인
+문서는 페이지 주소만, 링크 자체가 없는 문서는 빈 문자열이므로 **버튼을 걸기 전에 확인해야
+한다.** 앵커가 `#undefined-3` 꼴인 것은 GitBook이 한글 제목의 슬러그를 만들지 못하기
+때문이고, 빌드 때 실제 발행된 id를 읽어온 값이라 그대로 열면 해당 섹션으로 이동한다
+(→ [scripts/doc_links.py](../scripts/doc_links.py)). `documents[].url`도 같은 값이다.
 
 한 질문에 대한 후보 답변 여러 개가 아니라 **답변 하나를 이루는 조각들**이다(내부 이름은
 `AnswerSection`이다). `answers[0]`을 "첫 번째 답변"으로 읽지 말 것.

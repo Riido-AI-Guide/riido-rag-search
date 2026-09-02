@@ -64,10 +64,22 @@ class SourceRefOut(BaseModel):
     """섹션 하나가 근거로 삼은 문서 1건"""
     doc_id: str = Field(description="답변 단위 식별자", examples=["guide/휴지통/복구-및-영구-삭제"])
     section: str = Field(description="문서 경로. 화면에 그대로 표시한다", examples=["휴지통 > 복구 및 영구 삭제"])
+    url: str = Field(
+        default="",
+        description=(
+            "근거 문서의 원문 주소. 이 값을 근거 버튼의 링크로 걸면 된다.\n\n"
+            "가능하면 해당 섹션 앵커까지 붙어 있다. 앵커는 GitBook이 실제로 발행한 id를 "
+            "빌드 때 읽어온 것이라 사람이 읽을 수 있는 형태가 아닐 수 있다"
+            "(한글 제목은 `#undefined-2`처럼 나온다) — 화면에 그대로 노출하지 말고 "
+            "표시는 section으로, 이동만 이 값으로 한다.\n\n"
+            "링크를 못 붙인 문서는 빈 문자열이므로 버튼을 걸기 전에 확인할 것."
+        ),
+        examples=["https://docs.riido.io/data/trash#undefined-2"],
+    )
 
     @classmethod
     def from_domain(cls, ref: SourceRef) -> "SourceRefOut":
-        return cls(doc_id=ref.doc_id, section=ref.section)
+        return cls(doc_id=ref.doc_id, section=ref.section, url=ref.url)
 
 
 class AnswerSectionOut(BaseModel):
