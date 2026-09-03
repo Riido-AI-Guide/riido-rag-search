@@ -15,6 +15,14 @@ class AnswerUnitOut(BaseModel):
     section: str = Field(examples=["팀 > 팀 관리"])
     source_type: str = Field(examples=["guide"])
     ord_idx: int = Field(description="원문 등장 순서")
+    url: str = Field(
+        default="",
+        description=(
+            "이 문서의 원문 주소(docs.riido.io). 가능하면 섹션 앵커까지 붙는다. "
+            "링크를 못 붙인 문서는 빈 문자열"
+        ),
+        examples=["https://docs.riido.io/data/trash#undefined-2"],
+    )
     content: Optional[str] = Field(default=None, description="본문. include_content=false면 생략")
 
     @classmethod
@@ -25,6 +33,7 @@ class AnswerUnitOut(BaseModel):
             section=row["section"],
             source_type=row["source_type"],
             ord_idx=row["ord_idx"],
+            url=row["source_url"] or "",
             content=row["content"] if include_content else None,
         )
 
@@ -36,6 +45,7 @@ class AnswerUnitOut(BaseModel):
             section=chunk.section,
             source_type=chunk.source_type,
             ord_idx=chunk.ord_idx,
+            url=chunk.source_url,
             content=chunk.content if include_content else None,
         )
 

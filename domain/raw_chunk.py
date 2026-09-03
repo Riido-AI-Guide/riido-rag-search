@@ -11,3 +11,4 @@ class RawChunk:
     doc_id: str = "" # 답변 단위 식별자 (answer_units PK)
     ord_idx: int = 0 # 원문 등장 순서
     source_hash: str = "" # content 해시 (증분 빌드 판정용)
+    source_url: str = "" # 원문 링크 (docs.riido.io 페이지 + 섹션 앵커)

@@ -168,7 +168,8 @@ def fetch_answer_units(ordered_doc_ids: List[str], hits: List[SearchHit]) -> Lis
 
     with get_cursor() as cur:
         cur.execute("""
-            SELECT doc_id, title, section, source_type, content, ord_idx
+            SELECT doc_id, title, section, source_type, content, ord_idx,
+                   COALESCE(source_url, '') AS source_url
             FROM answer_units WHERE doc_id = ANY(%s)
         """, (ordered_doc_ids,))
         rows = {row["doc_id"]: row for row in cur.fetchall()}
@@ -186,6 +187,7 @@ def fetch_answer_units(ordered_doc_ids: List[str], hits: List[SearchHit]) -> Lis
             source_type=row["source_type"],
             content=row["content"],
             ord_idx=row["ord_idx"],
+            source_url=row["source_url"],
             hits=[h for h in hits if h.doc_id == doc_id],  # 점수는 SearchHit에만 둔다
         ))
 

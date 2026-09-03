@@ -7,7 +7,7 @@ from domain import AnswerEvaluation, AnswerSection
 @dataclass
 class Answer:
     title: str = ""                 # 답변 카드 제목 (예: "대기 VS 백로그")
-    answer_type: str = "concept"    # concept/step/judgement/troubleshoot/explore/no_answer/error
+    answer_type: str = "concept"    # concept/step/judgement/troubleshoot/explore/no_answer/parse_error
     sections: List[AnswerSection] = field(default_factory=list)
     evaluation: Optional[AnswerEvaluation] = None
     raw: str = ""                   # LLM 원본 응답. 파싱 실패·오류 시 여기에만 값이 있다

@@ -40,8 +40,8 @@ for query in test_queries:
     answer = generate_rag_answer(transformed_query.cleaned_query, searched_docs)
 
     print(f"\n[답변] {answer.title or '(제목 없음)'}  ·  {answer.answer_type}")
-    if not answer.sections:
-        print(f"  ⚠ 섹션 없음 — 원문: {answer.raw[:200]}")
+    if answer.answer_type == "parse_error":
+        print(f"  ⚠ 형식 깨짐 — 라벨 없는 섹션 하나에 원문이 담긴다")
     for s in answer.sections:
         print(f"\n  ┌ {s.label}")
         for line in s.text.split("\n"):

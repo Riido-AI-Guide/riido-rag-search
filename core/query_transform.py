@@ -59,24 +59,10 @@ _CONTEXT_SYSTEM_PROMPT = """
    맥락과 무관한 순수한 인사/감사("고마워", "잘 되네요")만 false입니다.
 """
 
-# 첫 대화 시 제목 생성
-_TITLE_SYSTEM_PROMPT = """
-당신은 고객 지원 챗봇의 대화 목록에 붙일 제목을 만드는 편집자입니다.
-사용자의 첫 질문을 읽고, 그 대화가 무엇에 대한 것인지 한눈에 알 수 있는 제목을 JSON으로만 응답하세요.
 
-[규칙]
-1. 한국어 명사구로, 공백 포함 20자 이내. 마침표·물음표·따옴표를 붙이지 마세요.
-2. 질문의 핵심 대상과 행위를 남기세요. "질문", "문의", "관련 문의"처럼 내용이 없는 말은 쓰지 마세요.
-   - "팀원을 어떻게 추가해?" -> "팀원 추가 방법"
-   - "스프린트 기간 최대 몇 주까지 돼?" -> "스프린트 최대 기간"
-   - "PR 연동이 자꾸 끊겨요" -> "PR 연동 오류"
-3. 여러 주제가 섞여 있으면 가장 중심이 되는 것 하나만 담으세요.
-4. 인사·잡담이라 주제라고 할 것이 없으면 "새 대화"로 하세요.
-
-[JSON 응답 형식]
-{"title": "팀원 추가 방법"}
-"""
-
+# ---------------------------------------------------------------------------
+# 프롬프트 조립
+# ---------------------------------------------------------------------------
 
 def _format_history(history: List[ConversationTurn]) -> str:
     """이전 대화를 턴 번호가 붙은 텍스트로 직렬화"""
@@ -153,10 +139,22 @@ def transform_user_query(
 
 
 # ---------------------------------------------------------------------------
-# 대화 제목
+# 제목 — 제목 전용 LLM 호출은 없다. 답변 생성이 만든 Answer.title을 다듬어 쓴다.
 # ---------------------------------------------------------------------------
 
-def _fallback_title(raw_query: str) -> str:
+def normalize_title(title: str, raw_query: str = "") -> str:
+    """
+    Answer.title을 화면·대화 목록에 걸 수 있게 다듬는다.
+
+    답변 생성이 만든 제목을 그대로 쓰므로 여기서는 따옴표와 길이만 정리한다.
+    유형에 따라 제목이 비어 오므로(no_answer, parse_error) 그때는 질문 원문을 줄여
+    대신 쓴다 — 첫 턴에 빈 제목이 나가면 대화가 이름 없이 만들어진다.
+    """
+    text = " ".join((title or "").split()).strip("\"'“”‘’ ")
+    return text[:_TITLE_MAX_CHARS] if text else fallback_title(raw_query)
+
+
+def fallback_title(raw_query: str) -> str:
     """LLM 없이 만드는 제목. 원문을 줄여 쓴다"""
     text = " ".join((raw_query or "").split())
     if not text:
@@ -164,26 +162,3 @@ def _fallback_title(raw_query: str) -> str:
     if len(text) <= _TITLE_MAX_CHARS:
         return text
     return text[: _TITLE_MAX_CHARS - 1] + "…"
-
-
-def generate_conversation_title(raw_query: str, model_name: str = "gpt-4o-mini") -> str:
-    """
-    첫 질문으로 대화 목록에 걸 제목을 만든다. 첫 턴에서만 부른다.
-    """
-    try:
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {"role": "system", "content": _TITLE_SYSTEM_PROMPT.strip()},
-                {"role": "user", "content": f"사용자 질문: {raw_query}"},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.2,
-        )
-
-        title = json.loads(response.choices[0].message.content).get("title", "")
-        title = " ".join(str(title).split()).strip("\"'“”‘’ ")
-        return title[:_TITLE_MAX_CHARS] if title else _fallback_title(raw_query)
-
-    except Exception:
-        return _fallback_title(raw_query)

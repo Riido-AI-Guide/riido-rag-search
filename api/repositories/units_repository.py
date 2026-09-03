@@ -6,7 +6,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.db import get_cursor
 
-ANSWER_COLUMNS = "doc_id, title, section, source_type, content, ord_idx"
+ANSWER_COLUMNS = (
+    "doc_id, title, section, source_type, content, ord_idx, "
+    "COALESCE(source_url, '') AS source_url"
+)
 SEARCH_COLUMNS = "id, doc_id, view_type, text"
 
 

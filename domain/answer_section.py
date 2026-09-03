@@ -7,6 +7,7 @@ class SourceRef:
     """답변 섹션이 근거로 삼은 문서 1건"""
     doc_id: str   # 답변 단위 식별자 (answer_units PK)
     section: str  # 문서 경로 (예: "팀 > 팀 관리") — 화면에 그대로 표시
+    url: str = "" # 원문 링크. 근거 버튼을 걸 주소이고, 없으면 빈 문자열
 
 
 @dataclass

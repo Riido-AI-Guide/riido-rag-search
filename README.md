@@ -31,6 +31,19 @@ python -m scripts.build_search_units        # search_units 적재
 uvicorn api.main:app --reload               # 저장소 루트에서
 ```
 
+개발자마다 DB가 따로라 별도 마이그레이션 절차를 두지 않는다. **빌드 스크립트가 스키마를
+맞춘다** — 이미 데이터가 있는 DB에서 `build_answer_units`를 돌리면 없는 컬럼을 만들고
+빈 값만 채운다. 본문 해시가 그대로면 재임베딩하지 않으므로(`유지` / `링크만 갱신`으로
+집계된다) 이미 만들어 둔 벡터는 그대로 남는다.
+
+### 근거 링크
+
+답변 단위마다 원문 주소(`answer_units.source_url`)를 들고 있고, `/ask` 응답의
+`answers[].sources[].url`로 나간다. 링크는 규칙으로 만들지 않고 **빌드 때 스냅샷으로
+받아온다** — llms.txt의 나열 순서로 페이지를 짝짓고(제목으로 짝지으면 안 된다. '자동화'와
+'MCP 서버'가 각각 두 번 나온다), 섹션 앵커는 렌더된 페이지에서 실제 id를 읽는다.
+이유와 함정은 [scripts/doc_links.py](scripts/doc_links.py)에 적어 두었다.
+
 ### 설정
 
 설정 파일은 둘이고, 다루는 것이 겹치지 않는다.
