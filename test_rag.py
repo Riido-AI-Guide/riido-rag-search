@@ -1,4 +1,4 @@
-from core.evaluation import evaluate_faithfulness
+from core.evaluation import evaluate_answer
 from core.generation import generate_rag_answer
 from core.query_transform import transform_user_query
 from core.search import search
@@ -53,7 +53,7 @@ for query in test_queries:
     # 거절하거나 파싱이 깨진 답변을 채점하면 점수가 왜곡된다
     # (거절은 지어낸 게 없어 faithfulness가 1.0으로, parse_error는 JSON 원문이 답변으로 들어간다)
     if answer.is_answered:
-        eval_result = evaluate_faithfulness(
+        eval_result = evaluate_answer(
             question=transformed_query.cleaned_query,
             context_documents=[doc.content for doc in searched_docs],
             generated_answer=answer.message

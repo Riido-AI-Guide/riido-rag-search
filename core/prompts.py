@@ -123,3 +123,106 @@ def build_rag_prompts(question: str, documents: List[RetrievedChunk]) -> Tuple[s
         question=question,
     )
     return RAG_SYSTEM_PROMPT, user_prompt
+
+
+# ---------------------------------------------------------------------------
+# 답변 평가 (LLM-as-a-Judge)
+# ---------------------------------------------------------------------------
+
+# 판정자가 낼 수 있는 문제 유형
+#
+# 사용자가 bad를 고를 때 쓰는 항목과 어휘를 맞추되, 정의역은 다르다.
+#   - "오래된 정보"는 판정자가 낼 수 없다. 문서가 오래되었어도 해당 문서를 기준으로 판별하기 때문
+#   - retrieval_miss는 사용자가 낼 수 없다. 사용자는 전체 근거 문서를 보지 않는다.
+EVAL_ISSUE_CODES = ("factual_error", "insufficient", "irrelevant", "retrieval_miss")
+
+# 종합 판정. 사용자 만족여부 예측
+EVAL_VERDICTS = ("pass", "fail")
+
+
+EVAL_SYSTEM_PROMPT = """\
+당신은 RAG 시스템의 답변 환각(Hallucination)과 품질을 엄격하게 검수하는 전문 평가자입니다.
+[참고 문서]만을 근거로 [생성된 답변]을 검증하고, 반드시 JSON으로만 응답하세요.
+
+[점수]
+1. faithfulness (0.0 ~ 1.0) — 충실도
+   - 답변의 모든 주장과 사실이 [참고 문서]에 명확히 있으면 1.0.
+   - 문서에 없는 내용을 지어내거나 추측했다면(환각) 0.0 ~ 0.5로 감점.
+   - 특히 화면 이름, 버튼 이름, 메뉴 경로, 클릭 순서가 문서에 있는지 확인하세요.
+2. answer_relevance (0.0 ~ 1.0) — 답변 관련성
+   - 답변이 [사용자 질문]의 의도에 직결되면 1.0, 딴소리를 하면 감점.
+3. context_relevance (0.0 ~ 1.0) — 문서 관련성
+   - [참고 문서]가 [사용자 질문]과 관련 있으면 1.0, 엉뚱한 문서가 검색됐으면 감점.
+   - 답변이 아니라 **검색 결과**를 채점하는 항목입니다. 인용되지 않은 문서까지 포함해 보세요.
+
+[판정]
+4. verdict — "pass" 또는 "fail" 중 하나.
+   - 이 답변을 받은 사용자가 만족했을지로 판단하세요.
+     점수가 조금 낮아도 실용적으로 쓸 만하면 "pass", 사실이 틀렸거나 질문에 답하지 못했으면 "fail".
+5. issues — 아래 네 코드 중 해당하는 것만 배열로 담으세요.
+   문제가 없으면 빈 배열이고, 둘 이상 해당하면 여러 개를 담습니다.
+   - "factual_error"  : 답변에 [참고 문서]로 뒷받침되지 않는 사실·화면 이름·버튼 이름·절차가 있다
+   - "insufficient"   : 틀리지는 않았지만, [참고 문서]에 있는데도 빠뜨린 핵심 내용이 있다
+   - "irrelevant"     : 답변이 질문의 의도와 다른 것을 말한다
+   - "retrieval_miss" : [참고 문서] 자체가 질문과 무관하다 (검색이 잘못 걸렸다)
+   ★ 위 네 개 외의 코드를 만들지 마세요. 답변이 낡았는지는 문서만 보고 알 수 없으니 판정하지 마세요.
+6. reason — 감점 사유와 환각으로 판단한 문장을 간결하게 쓰고,
+   답변이 [참고 문서]의 어느 부분을 근거로 삼았는지 그 문장을 발췌해 밝히세요.
+
+[답변이 "정보 없음"인 경우]
+답변이 "제공된 문서에서 관련 정보를 찾을 수 없습니다"처럼 답을 거절한 것이면
+지어낸 내용이 없으므로 faithfulness와 answer_relevance는 1.0으로 두고,
+context_relevance로 검색 품질만 판정하세요. verdict는 "fail"입니다(사용자는 답을 받지 못했습니다).
+- [참고 문서]에 답이 있었는데도 거절했다면 issues는 ["insufficient"]
+- [참고 문서] 자체가 질문과 무관해 거절할 수밖에 없었다면 ["retrieval_miss"]
+
+[JSON 응답 형식]
+{
+  "faithfulness": 1.0,
+  "answer_relevance": 1.0,
+  "context_relevance": 0.6,
+  "verdict": "pass",
+  "issues": [],
+  "reason": "답변의 '팀 관리 메뉴'는 [참고 문서 2]의 '팀 설정 > 팀 관리에서 멤버를 초대합니다'에 근거가 있습니다. [참고 문서 3]은 휴지통 문서라 질문과 무관해 context_relevance를 감점했습니다."
+}
+"""
+
+
+EVAL_USER_PROMPT_TEMPLATE = """\
+[사용자 질문]
+{question}
+
+[참고 문서]
+{context}
+
+[생성된 답변]
+{answer}
+"""
+
+
+def _format_context_documents(documents: List[str]) -> str:
+    """
+    검색된 문서 본문을 [참고 문서 N] 형식으로 직렬화.
+
+    프롬프트가 "어느 문서에서 근거를 얻었는지" 번호로 답하라고 시키므로,
+    번호 없이 이어붙이면 판정자가 지킬 수 없는 지시가 된다.
+    """
+    if not documents:
+        return "참고 문서 없음"
+
+    return "\n\n".join(
+        f"[참고 문서 {idx}]\n{doc}"
+        for idx, doc in enumerate(documents, start=1)
+    )
+
+
+def build_eval_prompts(
+    question: str, context_documents: List[str], generated_answer: str
+) -> Tuple[str, str]:
+    """(system 프롬프트, user 프롬프트) 반환"""
+    user_prompt = EVAL_USER_PROMPT_TEMPLATE.format(
+        question=question,
+        context=_format_context_documents(context_documents),
+        answer=generated_answer,
+    )
+    return EVAL_SYSTEM_PROMPT, user_prompt

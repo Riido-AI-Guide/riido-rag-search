@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 
-from domain import AnswerEvaluation, AnswerSection
+from domain import AnswerSection
 
 
 @dataclass
@@ -9,12 +9,13 @@ class Answer:
     title: str = ""                 # 답변 카드 제목 (예: "대기 VS 백로그")
     answer_type: str = "concept"    # concept/step/judgement/troubleshoot/explore/no_answer/parse_error
     sections: List[AnswerSection] = field(default_factory=list)
-    evaluation: Optional[AnswerEvaluation] = None
     raw: str = ""                   # LLM 원본 응답. 파싱 실패·오류 시 여기에만 값이 있다
 
     @property
     def message(self) -> str:
-        """평가·복사·로깅용 평문(마크다운). sections가 없으면 raw를 그대로 준다."""
+        """
+        평가·복사·로깅용 평문(마크다운). sections가 없으면 raw를 그대로 준다.
+        """
         if not self.sections:
             return self.raw
         return "\n\n".join(

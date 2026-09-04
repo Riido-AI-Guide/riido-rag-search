@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from domain import AnswerEvaluation, AnswerSection, ConversationTurn, RetrievedChunk
-from core.evaluation import EvaluationError, evaluate_faithfulness
+from core.evaluation import EvaluationError, evaluate_answer
 from core.generation import generate_rag_answer
 from core.query_transform import normalize_title, transform_user_query
 from core.search import search as rag_search
@@ -137,7 +137,7 @@ def ask(
     evaluation = None
     if evaluate:
         try:
-            evaluation = evaluate_faithfulness(
+            evaluation = evaluate_answer(
                 question=transformed.cleaned_query,
                 context_documents=[d.content for d in documents],
                 generated_answer=answer.message,
