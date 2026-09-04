@@ -27,6 +27,7 @@ pip install -r requirements.txt
 
 python -m scripts.build_answer_units        # answer_units 적재 (먼저)
 python -m scripts.build_search_units        # search_units 적재
+python -m scripts.build_qna_logs            # 질의응답 로그·평가 테이블 (인덱스와 무관, 순서 상관없음)
 
 uvicorn api.main:app --reload               # 저장소 루트에서
 ```
