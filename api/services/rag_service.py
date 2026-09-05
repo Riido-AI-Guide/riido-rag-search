@@ -1,12 +1,14 @@
 """
-api/services/rag_service.py — 질의 → 검색 → 답변 → (선택) 평가 오케스트레이션
+api/services/rag_service.py — 질의 → 검색 → 답변 오케스트레이션과, 그 뒤에 도는 평가
 """
 
 import logging
+import uuid
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from domain import AnswerEvaluation, AnswerSection, ConversationTurn, RetrievedChunk
+from domain import AnswerSection, ConversationTurn, RetrievedChunk, sections_to_text
+from api.repositories import qna_repository, units_repository
 from core.evaluation import EvaluationError, evaluate_answer
 from core.generation import generate_rag_answer
 from core.query_transform import normalize_title, transform_user_query
@@ -30,6 +32,10 @@ NO_SEARCH_TITLE = "새 대화"
 
 @dataclass
 class AskResult:
+    # 이 턴의 식별자. /ask가 발급해 응답에 실어 보내고, 로그·평가가 이 값으로 이어진다.
+    # 백엔드의 메시지 id와는 다른 값이다 — 그쪽은 답변을 저장한 뒤에야 생긴다.
+    qna_uuid: str
+
     raw_query: str
     cleaned_query: str
     needs_search: bool
@@ -50,19 +56,21 @@ class AskResult:
     answers: List[AnswerSection]
 
     documents: List[RetrievedChunk] = field(default_factory=list)
-    evaluation: Optional[AnswerEvaluation] = None
 
     # 답변 생성에는 쓰지 않고 응답에 그대로 돌려보내기만 한다(호출자의 로그 대조용)
     conversation_id: Optional[str] = None
 
     @property
+    def answer_text(self) -> str:
+        """
+        판정자에게 넘기고 qna_logs.answer_text에 저장하는 평문.
+        """
+        return sections_to_text(self.answers)
+
+    @property
     def doc_ids(self) -> List[str]:
         """
-        답변이 실제로 인용한 문서. 섹션에 처음 등장한 순서대로 주고 중복은 없앤다.
-
-        검색으로 가져온 문서 전체가 아니다 — 검색에는 걸렸지만 답변에 쓰이지 않은
-        문서는 빠진다(그쪽은 documents에 그대로 있다). 인용이 하나도 없으면 빈 배열이며,
-        답변 형식이 깨진 경우(parse_error)도 여기에 해당한다.
+        답변이 실제로 인용한 문서. 검색으로 가져온 문서 전체 X
         """
         seen = set()
         ordered: List[str] = []
@@ -81,7 +89,6 @@ def ask(
     history: Optional[List[ConversationTurn]] = None,
     conversation_id: Optional[str] = None,
     max_history_turns: int = 5,
-    evaluate: bool = False,
 ) -> AskResult:
     """
     사용자 질문 하나를 끝까지 처리한다. LLM 호출 2회 + 임베딩 1회
@@ -105,11 +112,15 @@ def ask(
     # 제목을 뽑을 답변이 없는 인사·잡담 경로에서만 쓴다.
     is_first_turn = not history and not conversation_id
 
+    # 이 턴의 식별자. 모든 경로에서 발급
+    qna_uuid = str(uuid.uuid4())
+
     transformed = transform_user_query(query, history=recent_history)
 
     # 인사·잡담이면 검색, 생성 x
     if not transformed.needs_search:
-        return AskResult(
+        result = AskResult(
+            qna_uuid=qna_uuid,
             raw_query=query,
             cleaned_query=transformed.cleaned_query,
             needs_search=False,
@@ -123,6 +134,8 @@ def ask(
             )],
             conversation_id=conversation_id,
         )
+        _save_log(result)
+        return result
 
     # 검색과 생성에는 재작성(전처리)된 질문만 넘긴다. -> 이후 단계는 단일턴과 동일
     # hits(문장 단위 점수)는 응답에 싣지 않는다 — 근거는 문서 단위로만 준다
@@ -133,19 +146,9 @@ def ask(
     # LlmError는 잡지 않는다. 답변 생성 실패는 요청 실패이므로 그대로 올려보낸다.
     answer = generate_rag_answer(transformed.cleaned_query, documents)
 
-    # 추후 평가 기능 추가를 위한 placeholder
-    evaluation = None
-    if evaluate:
-        try:
-            evaluation = evaluate_answer(
-                question=transformed.cleaned_query,
-                context_documents=[d.content for d in documents],
-                generated_answer=answer.message,
-            )
-        except EvaluationError as e:
-            logger.warning("답변 평가 실패 (답변은 정상 반환): %s", e)
 
-    return AskResult(
+    result = AskResult(
+        qna_uuid=qna_uuid,
         raw_query=query,
         cleaned_query=transformed.cleaned_query,
         needs_search=True,
@@ -153,6 +156,80 @@ def ask(
         title=normalize_title(answer.title, query),
         answers=answer.sections,
         documents=documents,
-        evaluation=evaluation,
         conversation_id=conversation_id,
     )
+    _save_log(result)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 로그와 평가
+# ---------------------------------------------------------------------------
+
+def _save_log(result: AskResult) -> None:
+    """
+    이 턴을 기록한다. 응답을 보내기 전에 동기로 부른다.
+
+    평가는 응답 뒤에 돌지만 이 행은 먼저 있어야 한다 — 프로세스가 죽어 평가를 놓쳐도
+    행이 남아 있으면 운영 콘솔에서 다시 돌릴 수 있고, 없으면 대상 자체를 찾을 수 없다.
+    INSERT 1건이라 LLM 2회 옆에서는 무시할 만한 비용이다.
+
+    실패해도 답변은 그대로 나간다. 로그보다 답변이 중요하다 — 다만 조용히 유실되므로
+    테이블이 없는 상황은 /health가 알린다.
+    """
+    try:
+        qna_repository.insert_log(
+            qna_uuid=result.qna_uuid,
+            raw_query=result.raw_query,
+            cleaned_query=result.cleaned_query,
+            answer_text=result.answer_text,
+            answer_type=result.answer_type,
+            retrieved_doc_ids=[d.doc_id for d in result.documents],
+            conversation_id=result.conversation_id,
+        )
+    except Exception:
+        logger.warning(
+            "질의응답 로그 저장 실패 (답변은 정상 반환): %s", result.qna_uuid, exc_info=True
+        )
+
+
+def evaluate_and_store(qna_uuid: str) -> None:
+    """
+    로그 1건을 읽어 채점하고 저장. 
+
+    /ask 응답을 보낸 뒤 백그라운드로 돌고, 운영 콘솔의 재실행도 같은 함수 사용
+    호출자가 없는 자리에서 도는 코드라 예외를 밖으로 내보내지 않는다.
+
+    실패하면 아무것도 저장 x
+    """
+    try:
+        log = qna_repository.get_log(qna_uuid)
+        if log is None:
+            logger.warning("평가할 로그가 없다: %s", qna_uuid)
+            return
+
+        # 인사·잡담은 근거 문서도 답변도 없어 채점할 것이 없다
+        if log["answer_type"] == NO_SEARCH_ANSWER_TYPE:
+            return
+
+        # 로그에는 doc_id만 남기므로 본문은 여기서 다시 읽는다.
+        # 검색된 순서를 지켜야 판정자가 보는 [참고 문서 N] 번호가 답변 당시와 같아진다.
+        doc_ids = list(log["retrieved_doc_ids"])
+        contents = units_repository.get_answer_contents(doc_ids)
+
+        missing = [d for d in doc_ids if d not in contents]
+        if missing:
+            # 재색인으로 사라진 문서. 남은 것만으로 채점한다 — 그 사실은 여기 로그에만 남는다
+            logger.warning("근거 문서가 사라져 일부를 빼고 평가한다 %s: %s", qna_uuid, missing)
+
+        evaluation = evaluate_answer(
+            question=log["cleaned_query"],
+            context_documents=[contents[d] for d in doc_ids if d in contents],
+            generated_answer=log["answer_text"],
+        )
+        qna_repository.upsert_evaluation(qna_uuid, evaluation)
+
+    except EvaluationError as e:
+        logger.warning("답변 평가 실패 — 미평가로 남는다 %s: %s", qna_uuid, e)
+    except Exception:
+        logger.exception("답변 평가 중 오류 — 미평가로 남는다 %s", qna_uuid)

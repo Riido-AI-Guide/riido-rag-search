@@ -101,6 +101,17 @@ class AnswerSectionOut(BaseModel):
 
 
 class AskResponse(BaseModel):
+    qna_uuid: str = Field(
+        description=(
+            "이 턴의 식별자(UUID). 어느 경로에서도 비지 않는다.\n\n"
+            "답변을 보낸 뒤 서버가 이 답변을 자동으로 채점하고 그 결과를 이 값에 붙여 둔다. "
+            "메시지와 함께 저장해 두면 나중에 사용자 good/bad 평가와 대조하거나, 대화가 지워질 때 "
+            "품질 로그도 함께 정리할 수 있다. 당장 쓰지 않아도 무방하다.\n\n"
+            "백엔드가 발급하는 메시지 id와는 다른 값이다 — 이 값은 답변을 만들 때 생기고, "
+            "메시지 id는 답변을 저장한 뒤에 생긴다."
+        ),
+        examples=["3f2b9c14-8a51-4e77-9d2c-6b0f5a1e7c84"],
+    )
     raw_query: str = Field(description="사용자가 보낸 원문")
     cleaned_query: str = Field(
         description=(

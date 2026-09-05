@@ -51,6 +51,18 @@ def get_answer_unit(doc_id: str) -> Optional[Dict[str, Any]]:
         return cur.fetchone()
 
 
+def get_answer_contents(doc_ids: List[str]) -> Dict[str, str]:
+    """
+    {doc_id: 본문}. 재평가할 때 근거 문서를 다시 읽음
+    """
+    if not doc_ids:
+        return {}
+
+    with get_cursor() as cur:
+        cur.execute("SELECT doc_id, content FROM answer_units WHERE doc_id = ANY(%s);", (doc_ids,))
+        return {r["doc_id"]: r["content"] for r in cur.fetchall()}
+
+
 # ---------------------------------------------------------------------------
 # search_units
 # ---------------------------------------------------------------------------

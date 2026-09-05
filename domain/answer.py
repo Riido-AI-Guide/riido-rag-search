@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List
 
-from domain import AnswerSection
+from domain import AnswerSection, sections_to_text
 
 
 @dataclass
@@ -18,10 +18,7 @@ class Answer:
         """
         if not self.sections:
             return self.raw
-        return "\n\n".join(
-            f"**{s.label}**  \n{s.text}" if s.label else s.text
-            for s in self.sections
-        )
+        return sections_to_text(self.sections)
 
     @property
     def is_answered(self) -> bool:

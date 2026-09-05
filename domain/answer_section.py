@@ -16,3 +16,13 @@ class AnswerSection:
     label: str   # 섹션 이름. 프론트가 이 값으로 스타일을 정한다
     text: str    # 섹션 본문
     sources: List[SourceRef] = field(default_factory=list)  # 이 섹션의 근거
+
+
+def sections_to_text(sections: List[AnswerSection]) -> str:
+    """
+    섹션을 평문(마크다운)으로 잇는다
+    """
+    return "\n\n".join(
+        f"**{s.label}**  \n{s.text}" if s.label else s.text
+        for s in sections
+    )

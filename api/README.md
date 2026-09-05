@@ -25,7 +25,8 @@ api/
 ├── deps.py                        페이지네이션·검색 파라미터 기본값
 ├── schemas/                       HTTP 경계 Pydantic 모델
 │   ├── common.py  chat.py  units.py  health.py
-├── repositories/units_repository.py   목록·단건 조회 SQL
+├── repositories/                  DB 접근 SQL
+│   ├── units_repository.py  qna_repository.py
 ├── routers/                       chat / answer_units / search_units / health
 └── services/rag_service.py        질의→검색→생성→평가 오케스트레이션
 ```
@@ -49,8 +50,10 @@ api/
 `query`가 필수고, 이전 대화가 있으면 `history`와 `conversation_id`를 함께 보낸다.
 `top_k`·`vector_weight`는 **요청으로 받지 않는다.** 서버 기본값(`Settings`)만 쓴다 —
 클라이언트가 `top_k`를 올려 비용을 밀어넣을 수 있게 둘 이유가 없고, 검색 파라미터 튜닝은
-`python -m scripts.evaluate_search`로 오프라인에서 한다. 근거 문서는 항상 포함하며,
-환각 평가는 하지 않는다.
+`python -m scripts.evaluate_search`로 오프라인에서 한다. 근거 문서는 항상 포함한다.
+
+**답변을 보낸 뒤** 서버가 그 답변을 자동으로 채점해 품질 로그에 남긴다. 채점은 응답을 보낸 다음에
+돌기 때문에 `/ask`의 응답 시간은 그대로다. 채점 결과는 응답의 `qna_uuid`로 되짚는다.
 
 ```jsonc
 // 요청 — 첫 대화면 history와 conversation_id를 생략한다
@@ -60,6 +63,7 @@ api/
 
 // 응답
 {
+  "qna_uuid": "3f2b9c14-8a51-4e77-9d2c-6b0f5a1e7c84",   // 이 턴의 식별자
   "raw_query": "팀원을 어떻게 추가해?",
   "cleaned_query": "팀원 추가 방법",
   "needs_search": true,
@@ -78,6 +82,14 @@ api/
   "documents": [...]
 }
 ```
+
+**`qna_uuid`** — 이 턴에 붙는 식별자다. **어느 경로에서도 비지 않는다.**
+답변을 보낸 뒤 서버가 그 답변을 채점하고 결과를 이 값에 붙여 두므로, 메시지와 함께 저장해 두면
+나중에 사용자 good/bad 평가와 대조하거나 대화가 지워질 때 품질 로그도 함께 정리할 수 있다.
+당장 쓰지 않아도 무방하다.
+
+백엔드가 발급하는 메시지 id와는 **다른 값이다.** 이 값은 답변을 만들 때 생기고, 메시지 id는
+답변을 저장한 뒤에 생긴다.
 
 **`answer_type`** — 답변 유형이다. 정상 답변은 `concept`/`step`/`judgement`/`troubleshoot`/
 `explore` 중 하나이고, 유형마다 `answers`의 `label` 구성이 다르다(→ [core/prompts.py](../core/prompts.py)의
@@ -194,9 +206,14 @@ const historyAnswer = res.answers.map(a => a.text).join("\n\n")
   `Settings.database_url`은 그 값을 기본값으로 얹어 `.env`로 덮어쓸 수 있게 한 것이다.
 - **LLM 오류 처리**: [core/generation.py](../core/generation.py)는 실패 시 `LlmError`를 올린다. `main.py`의 예외 핸들러가
   502로 변환하므로 오류 메시지가 정상 답변처럼 200 OK로 나가지 않는다.
-  [core/evaluation.py](../core/evaluation.py)는 `EvaluationError`를 올린다. 평가는 부가 정보라
-  `rag_service`가 잡아서 로그만 남기고 `evaluation: null`로 응답한다 — 실패를 0.0으로 채우면
-  "완전한 환각" 판정과 값이 같아져 구분할 수 없기 때문이다.
+  [core/evaluation.py](../core/evaluation.py)는 `EvaluationError`를 올린다. 평가는 응답을 보낸 뒤에
+  도는 일이라 요청에는 영향이 없고, 실패하면 **아무것도 저장하지 않는다** — 실패를 0.0으로 채우면
+  "완전한 환각" 판정과 값이 같아지고, 실패한 행을 남기면 "아직 평가 안 함"과 구분되지 않는다.
+  행이 없어야 미평가로 다시 잡혀 나중에 재실행할 수 있다.
+- **평가를 응답 뒤에 두는 이유**: 채점에 LLM 1회가 더 들어 응답 경로에 두면 그만큼 늦어진다.
+  `BackgroundTasks`로 응답을 보낸 다음에 돌린다. 대신 **로그 행은 응답 전에 동기로** 남긴다 —
+  프로세스가 죽어 채점을 놓쳐도 행이 있어야 나중에 다시 돌릴 대상을 찾을 수 있다.
+  로그 저장이 실패해도 답변은 그대로 나가고(답변이 로그보다 중요하다), 그 상황은 `/health`가 알린다.
 - **부팅 비용**: `core.search`는 로드 시점에 Kiwi와 임베딩 클라이언트를 만든다. 첫 요청이 이 비용을
   떠안지 않도록 `lifespan`에서 `core.search.warmup()`을 부른다. 그 import를 파일 최상단으로
   올리면 안 된다 — 로드 비용이 부팅 전으로 앞당겨져 lifespan이 재는 시간이 0이 된다.
@@ -207,8 +224,7 @@ const historyAnswer = res.answers.map(a => a.text).join("\n\n")
 
 | 제안 | 이유 |
 |---|---|
-| `POST /feedback` — 답변 good/bad | [domain/qna.py](../domain/qna.py)에 `is_good` 필드가 있는데 현재 아무 데서도 안 쓴다. 대화 로그를 남길 계획이었다면 `qna` 테이블과 이 엔드포인트가 그 자리다 |
+| `GET /qna` · `POST /evaluations` — 품질 로그 조회와 평가 재실행 | 자동 채점을 놓쳤거나 프롬프트를 고쳐 다시 돌리고 싶을 때 쓸 운영 콘솔용 API. 콘솔이 백엔드를 거치지 않고 이 서버에 직접 붙으므로 관리자 인증이 함께 필요하다 |
 | `GET /answer-units/orphans` — 검색 문장이 없는 문서 | `search_units`가 하나도 안 달린 `answer_units`는 영원히 검색되지 않는다. 인덱스 품질 점검용 |
 | `POST /admin/reindex` — 인덱스 재빌드 트리거 | 지금은 서버에 SSH로 들어가 스크립트를 돌려야 한다. 다만 수 분 걸리는 작업이라 BackgroundTasks나 작업 큐가 필요하고, 인증도 있어야 한다 |
 | `GET /ask/stream` — 답변 토큰 스트리밍 | `/ask`는 LLM 2~3회 + 임베딩 1회라 체감 지연이 크다. SSE로 답변을 흘려보내면 개선된다. `core/generation.py`가 `stream=True`를 지원하도록 바뀌어야 한다 |
-| 평가를 백그라운드로 | 환각 평가는 LLM 1회가 더 들어 `/ask`에서 뺐다. `rag_service.ask(evaluate=True)` 경로는 남아 있으니, 응답은 먼저 주고 평가는 `BackgroundTasks`로 돌려 로그에만 남기면 된다 |

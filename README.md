@@ -45,6 +45,28 @@ uvicorn api.main:app --reload               # 저장소 루트에서
 'MCP 서버'가 각각 두 번 나온다), 섹션 앵커는 렌더된 페이지에서 실제 id를 읽는다.
 이유와 함정은 [scripts/doc_links.py](scripts/doc_links.py)에 적어 두었다.
 
+### 답변 평가
+
+`/ask`는 답변을 보낸 뒤 그 답변을 자동으로 채점해 DB에 남긴다. 채점은 **응답을 보낸 다음에**
+돌기 때문에(`BackgroundTasks`) 응답 시간에는 영향이 없다. 테이블은
+`python -m scripts.build_qna_logs`가 만든다.
+
+| 테이블 | 내용 |
+|---|---|
+| `qna_logs` | 채점에 넣는 입력 — 질문 원문·정제된 질문·답변 평문·검색된 문서 id. `qna_uuid`가 PK |
+| `answer_evaluations` | 채점 결과 — 충실도·답변 관련성·문서 관련성, `verdict`(pass/fail), `issues`, 사유. 답변 1건에 1행 |
+
+`qna_uuid`는 `/ask`가 발급해 응답에 실어 보낸다. 백엔드가 발급하는 메시지 id와는 **다른 값이다** —
+이 값은 답변을 만들 때 생기고, 메시지 id는 답변을 저장한 뒤에 생긴다.
+
+**채점에 실패하면 아무것도 저장하지 않는다.** 실패한 행을 남기면 "아직 평가 안 함"과 구분되지
+않기 때문이다. 행이 없어야 미평가로 다시 잡혀 나중에 재실행할 수 있다.
+
+판정 프롬프트와 문제 유형 코드는 [core/prompts.py](core/prompts.py)에 있다. 코드는 사용자가
+bad를 고를 때 쓰는 항목과 어휘를 맞췄지만 정의역이 다르다 — "오래된 정보"는 판정자가 낼 수 없고
+(검색된 문서만 보므로 문서 자체가 낡았으면 오히려 충실도가 1.0이 된다), 반대로 `retrieval_miss`
+(문서가 질문과 무관하다)는 근거 문서를 보지 않는 사용자가 낼 수 없다.
+
 ### 설정
 
 설정 파일은 둘이고, 다루는 것이 겹치지 않는다.
@@ -77,20 +99,12 @@ python -m scripts.evaluate_search            # Hit@1 / Hit@3 / MRR 채점
   `TSVECTOR`가 아니라 Kiwi가 뽑은 키워드 문자열을 담는다(실제 `to_tsvector()`는 SQL에서 실행).
   `text_keywords`가 맞다. [scripts/build_search_units.py](scripts/build_search_units.py)의 대입부도
   함께 고쳐야 한다.
-- **`QnA` 저장 기능** — [domain/qna.py](domain/qna.py)는 질문·답변 로그를 DB에 남기려고 만들었지만
-  아직 아무 데서도 쓰지 않는다. 설계 방향은 정해졌다:
-
-  - 평가 점수가 낮으면 답변을 다시 생성하므로, **질문 1개에 답변 시도 N개**가 달린다.
-  - 근거 문서는 시도마다 달라지므로 `QnA`가 아니라 **각 시도**가 들고 있어야 한다.
-    (현재 `QnA.documents`에 있는 건 잘못된 위치)
-  - 따라서 `AnswerAttempt(검색어, 문서, 답변, 평가)`를 만들고 `QnA`는
-    `query` + `attempts: List[AnswerAttempt]` + `is_good` + `final_attempt`를 갖는다.
-  - `Answer.evaluation`은 이때 `AnswerAttempt.evaluation`으로 옮긴다
-    (`generate_rag_answer()`가 평가를 만들 수 없으므로 `Answer`에 두면 항상 `None`).
-  - 재시도가 **무엇을 바꾸는지**(검색어 변형 / top_k / temperature) 먼저 정해야
-    로그 스키마의 컬럼이 의미를 갖는다.
-  - 로그의 `doc_id`에는 FK를 걸지 않는다. [scripts/build_answer_units.py](scripts/build_answer_units.py)가
-    사라진 문서를 지울 때 과거 로그까지 CASCADE로 삭제된다.
+- **운영 콘솔 API** — 품질 로그 조회(`GET /qna`)와 평가 재실행(`POST /evaluations`)이 아직 없다.
+  자동 채점을 놓쳤거나 판정 프롬프트를 고쳐 다시 돌릴 때 필요하다. 콘솔이 백엔드를 거치지 않고
+  이 서버에 직접 붙을 예정이라 관리자 인증도 함께 있어야 한다.
+- **답변 재생성** — 채점이 답변을 보낸 뒤에 돌기 때문에 점수가 낮아도 그 자리에서 다시 만들 수 없다.
+  지금은 질문 1 : 답변 1 : 평가 1이다. 재생성을 도입하려면 재시도가 **무엇을 바꾸는지**
+  (검색어 변형 / top_k / temperature) 먼저 정해야 로그에 붙일 컬럼이 의미를 갖는다.
 - **import 시점 부수효과** — [core/search.py](core/search.py)가 모듈 로드 때 `Kiwi()`와
   `OpenAIEmbeddings()`를 만든다. 그래서 부팅 때 `warmup()`이 필요하고, 이 모듈을 import하는
   테스트는 무조건 수 초를 기다린다. 지연 생성으로 바꾸면 `warmup()` 본문이 실제 준비를 맡는다.
