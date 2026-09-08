@@ -357,3 +357,23 @@ def replace_doc_sentences(doc_id: str, rows: List[Dict[str, Any]]) -> None:
                     updated_at  = now();
             """, (row["doc_id"], row["view_type"], row["text"], row["text_tsv"],
                   row["embedding"], row["source_hash"]))
+
+
+def export_view_sentences() -> List[Dict[str, Any]]:
+    """
+    rag_view_sentences.json과 같은 모양·같은 순서로 문장 전체를 준다.
+
+    정렬은 파일과 맞춘다(doc_id → view_type → 적재 순). 순서가 흔들리면 저장소에
+    커밋할 때 diff가 파일 전체로 번져서, 무엇이 실제로 바뀌었는지 볼 수 없다.
+    (텍스트 순으로 정렬하면 지금 파일과 어긋난다 — 적재 순이 맞다. 다만 한 문서에
+    같은 유형의 문장이 둘 이상 있을 때, 콘솔에서 다시 저장하면 그 안에서 순서가 바뀔 수 있다.)
+
+    source(file/console)는 넣지 않는다 — 파일 형식에 없는 키이고,
+    파일에 담긴 이상 그 문장의 주인은 파일이다.
+    """
+    with get_cursor() as cur:
+        cur.execute("""
+            SELECT text, view_type, doc_id FROM search_units
+            ORDER BY doc_id, view_type, id;
+        """)
+        return [dict(r) for r in cur.fetchall()]

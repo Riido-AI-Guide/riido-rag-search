@@ -44,6 +44,7 @@ api/
 | GET | `/api/v1/search-units/coverage/{doc_id}` | 문서 전문 + 검색 문장 전체 |
 | PUT | `/api/v1/search-units/coverage/{doc_id}` | **검색 문장 저장 (전체 교체 = 추가·수정·삭제)** |
 | POST | `/api/v1/search-units/draft` | LLM으로 검색 문장 초안 생성 (저장 안 함) |
+| GET | `/api/v1/search-units/export` | **검색 문장 전체를 `rag_view_sentences.json` 형식으로 내보내기** |
 | GET | `/api/v1/evaluations` | **저장된 답변 평가 목록 — id 여러 개 한 번에 조회** |
 | GET | `/api/v1/evaluations/{qna_uuid}` | 평가 단건 |
 | GET | `/api/v1/qna` | **질의응답 로그 목록 — 미평가(`status=pending`) 조회** |
@@ -374,6 +375,7 @@ GET  /search-units/coverage?status=missing   ① 손볼 문서 찾기
 GET  /search-units/coverage/{doc_id}         ② 원문 + 지금 문장 보기
 POST /search-units/draft                     ③ LLM 초안 (저장 안 함)
 PUT  /search-units/coverage/{doc_id}         ④ 고친 목록 통째로 저장 → 즉시 검색됨
+GET  /search-units/export                    ⑤ 작업 결과를 JSON으로 받아 저장소에 커밋
 ```
 
 ②와 ④가 **같은 URL**이다. 읽은 목록을 사용자가 고친 그대로 다시 보내면 되고, 그래서
@@ -424,17 +426,38 @@ PUT  /search-units/coverage/{doc_id}         ④ 고친 목록 통째로 저장 
 출처를 구분하고(`file` / `console`) 정리 대상은 `file`뿐이다. 저장한 문서의 문장은 전부
 `console`이 된다 — 사람이 한 번 손본 문서는 그 사람이 주인이라는 뜻이다.
 
-**단, JSON에 있는 문장을 지우면 다음 빌드가 되살린다.** 파일이 아직 그 문장을 갖고 있기
-때문이다(정리는 파일에 없는 것을 지우는 일이지, 파일에 있는 것을 안 넣는 일이 아니다).
-완전히 없애려면 `rag_view_sentences.json`에서도 빼야 한다 — 내보내기가 있어야 이 고리가
-닫힌다(→ 루트 README의 "백로그").
+**단, JSON에 있는 문장을 지웠다면 내보내기(⑤)까지 해야 한다.** 정리(prune)는 파일에 없는
+것을 지우는 일이지 파일에 있는 것을 안 넣는 일이 아니라서, 파일이 그 문장을 그대로 갖고
+있으면 다음 빌드가 되살린다.
+
+### GET /api/v1/search-units/export
+
+DB의 검색 문장 전체를 [data/rag_view_sentences.json](../data/rag_view_sentences.json)과
+**같은 모양·같은 순서**로 내보낸다. 받은 내용으로 그 파일을 덮어쓰고 커밋하면 콘솔 작업이
+저장소에 남는다.
+
+```bash
+curl -s localhost:8000/api/v1/search-units/export -o data/rag_view_sentences.json
+git diff data/rag_view_sentences.json     # 콘솔에서 손댄 것만 뜬다
+```
+
+**바뀐 것이 없으면 diff도 없다.** 직렬화(2칸 들여쓰기, 한글 그대로)와 정렬(`doc_id` →
+`view_type` → 적재 순)을 파일과 맞춰 두었고, 지금 DB로 내보내면 커밋된 파일과 바이트까지
+같다. 그래서 diff에 뜨는 것이 곧 이번 작업 내용이다.
+
+이 단계가 있어야 세 가지가 닫힌다.
+
+| | 내보내기가 없으면 | 있으면 |
+|---|---|---|
+| 콘솔에서 추가한 문장 | 이 DB에만 있다. 다른 개발자·새 환경에는 없다 | 파일에 담겨 모두에게 전달된다 |
+| 파일 문장을 지운 것 | 다음 빌드가 되살린다 | 파일에서도 빠져 영구히 반영된다 |
+| 작업 이력 | 없다 | git 히스토리에 남는다 |
 
 **초안(③)은 저장하지 않는다.** 입력창에 채워 넣을 값을 돌려줄 뿐이고, 사람이 고른 것만 ④로
 보낸다 — 빈 칸에서 시작하면 아무도 채우지 않기 때문에 있는 API지, LLM에게 인덱스를 맡기려는
 것이 아니다. 이미 등록된 문장을 프롬프트에 함께 넣어 겹치는 초안을 피한다.
 
-아직 없는 것: 콘솔에서 넣은 문장을 JSON으로 **내보내기**. 지금은 DB에만 남아 다른 개발자의
-DB나 새 환경에는 없고, 파일에서 온 문장을 지운 것도 파일에 반영되지 않는다.
+
 
 ## 도메인 객체 vs API 스키마
 

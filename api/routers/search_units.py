@@ -2,9 +2,10 @@
 api/routers/search_units.py — 검색용 문장(search_units) 조회
 """
 
+import json
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from api.deps import Pagination
 from api.repositories import units_repository as repo
@@ -151,3 +152,27 @@ def draft_sentences(req: DraftRequest) -> DraftResponse:
             status.HTTP_404_NOT_FOUND, detail=f"문서를 찾을 수 없습니다: {req.doc_id}"
         )
     return DraftResponse(doc_id=req.doc_id, items=[SentenceInput(**i) for i in items])
+
+
+@router.get(
+    "/export",
+    summary="검색 문장 전체를 rag_view_sentences.json 형식으로 내보내기",
+    response_class=Response,
+    responses={200: {"content": {"application/json": {}}, "description": "파일 내용 그대로"}},
+    description=(
+        "DB의 검색 문장 전체를 [data/rag_view_sentences.json](../data/rag_view_sentences.json)과 "
+        "**같은 모양·같은 순서**로 내보낸다. 받은 내용으로 그 파일을 덮어쓰고 커밋하면 된다.\n\n"
+        "이 고리가 있어야 콘솔 작업이 저장소에 남는다 — 그러지 않으면 콘솔에서 넣은 문장은 "
+        "이 DB에만 있고, 파일에서 온 문장을 지운 것도 다음 빌드가 되살린다.\n\n"
+        "**바뀐 것이 없으면 diff도 없다.** 정렬을 파일과 맞춰 두었으므로, 커밋 전 diff에 뜨는 "
+        "것이 곧 콘솔에서 손댄 내용이다."
+    ),
+)
+def export_sentences() -> Response:
+    # 파일과 같은 직렬화 규칙(2칸 들여쓰기, 한글 그대로). 다르면 diff가 파일 전체로 번진다
+    body = json.dumps(repo.export_view_sentences(), ensure_ascii=False, indent=2)
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="rag_view_sentences.json"'},
+    )
