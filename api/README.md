@@ -24,11 +24,11 @@ api/
 ├── settings.py                    HTTP 계층 정책 (CORS, 기본 top_k, 페이지 크기)
 ├── deps.py                        페이지네이션·검색 파라미터 기본값
 ├── schemas/                       HTTP 경계 Pydantic 모델
-│   ├── common.py  chat.py  units.py  health.py  evaluations.py  qna.py
+│   ├── common.py  chat.py  units.py  health.py  evaluations.py  qna.py  index_status.py  coverage.py
 ├── repositories/                  DB 접근 SQL
 │   ├── units_repository.py  qna_repository.py
-├── routers/                       chat / answer_units / search_units / evaluations / qna / health
-└── services/rag_service.py        질의→검색→생성→평가 오케스트레이션
+├── routers/                       chat / answer_units / search_units / evaluations / qna / index_status / health
+└── services/                      rag_service.py  search_units_service.py
 ```
 
 ## 엔드포인트
@@ -40,10 +40,15 @@ api/
 | GET | `/api/v1/answer-units/{doc_id}` | 문서 단건 + 연결된 검색 문장 |
 | GET | `/api/v1/search-units` | **모든 검색용 문장 목록** |
 | GET | `/api/v1/search-units/stats` | view_type별 적재 통계 |
+| GET | `/api/v1/search-units/coverage` | **문서별 검색 문장 현황 (없음·낡음 표시)** |
+| GET | `/api/v1/search-units/coverage/{doc_id}` | 문서 전문 + 검색 문장 전체 |
+| PUT | `/api/v1/search-units/coverage/{doc_id}` | **검색 문장 저장 (전체 교체 = 추가·수정·삭제)** |
+| POST | `/api/v1/search-units/draft` | LLM으로 검색 문장 초안 생성 (저장 안 함) |
 | GET | `/api/v1/evaluations` | **저장된 답변 평가 목록 — id 여러 개 한 번에 조회** |
 | GET | `/api/v1/evaluations/{qna_uuid}` | 평가 단건 |
 | GET | `/api/v1/qna` | **질의응답 로그 목록 — 미평가(`status=pending`) 조회** |
 | POST | `/api/v1/evaluations/{qna_uuid}` | **평가 실행 / 재실행** |
+| GET | `/api/v1/index-status` | **인덱스가 본문을 따라잡았는지 (재빌드 필요 여부)** |
 | GET | `/api/v1/health` | DB·인덱스 적재 상태 |
 
 `doc_id`에 슬래시가 들어가므로(`guide/팀/팀-관리`) 단건 조회는 `{doc_id:path}` 컨버터를 쓴다.
@@ -324,6 +329,113 @@ POST /api/v1/evaluations/{qna_uuid}    # 한 건씩 채점 (판정자 LLM 1회)
 `BackgroundTasks`로 돌리며 진행 상황을 보여줄 방법이 따로 필요하다(→ "추가로 제안하는 API").
 지금은 `GET /qna?status=pending`의 목록을 클라이언트가 순회하며 건별로 부르면 된다.
 
+### GET /api/v1/index-status
+
+가이드를 다시 빌드한 뒤 **검색 인덱스가 따라왔는지** 본다. `/health`는 테이블이 있는지·
+비었는지만 보므로 이건 그 다음 질문이다: 적재는 됐는데 **검색이 최신인가.**
+
+`python -m scripts.build_answer_units`는 답변 본문만 갱신하고 검색 인덱스는 건드리지 않는다.
+그것만 돌리면 **답변은 최신인데 검색은 옛 문서 기준**으로 남고, 에러가 나지 않아 아무도 모른다.
+
+| 항목 | 뜻 | 해결 |
+|---|---|---|
+| `outdated_content_vector` | 옛 본문으로 색인된 문서. 새 내용의 단어로는 안 걸리고 지워진 내용의 단어로는 걸린다 | `build_search_units` |
+| `no_content_vector` | 원문 인덱스가 없어 **키워드 검색**에서 빠진 문서 | `build_search_units` |
+| `no_search_units` | 검색 문장이 없어 **벡터 검색**에서 빠진 문서 | `rag_view_sentences.json`에 문장 추가 후 `build_search_units`. **자동 생성 경로가 없어 사람 손이 필요하다** |
+
+낡음의 기준은 `answer_content_vectors.source_hash`다 — 그 인덱스가 어느 본문을 색인한
+것인지 행에 적어 두고 `answer_units.source_hash`와 비교한다. 예전에는 행이 있으면 그냥
+건너뛰어서 변경된 문서가 영원히 옛 인덱스로 남았다.
+
+```jsonc
+{
+  "status": "stale",              // ok면 재빌드할 것이 없다
+  "answer_units": 179,
+  "built_at": "2026-09-02T02:59:51.467076Z",   // answer_units가 마지막으로 바뀐 시각
+  "no_search_units":         { "count": 1, "doc_ids": ["guide/소개"] },
+  "no_content_vector":       { "count": 0, "doc_ids": [] },
+  "outdated_content_vector": { "count": 0, "doc_ids": [] },
+  "hint": "검색 문장이 없는 문서 1건은 자동으로 채워지지 않습니다 — ..."
+}
+```
+
+`doc_ids`는 앞 20건 표본이고 `count`가 전체다. `status`가 `stale`이어도 오류가 아니라
+"검색이 최신이 아니다"라는 뜻이므로 200으로 답한다.
+
+### 검색 문장 관리 (운영 콘솔)
+
+검색 문장(`search_units`)은 **자동 생성 경로가 없다.** 출처인
+[data/rag_view_sentences.json](../data/rag_view_sentences.json)이 외부에서 만들어 커밋한
+파일이라, 새로 생긴 문서나 내용이 바뀐 문서의 문장은 사람이 채워야 한다. 아래 네 API가
+그 작업 화면을 이룬다.
+
+```
+GET  /search-units/coverage?status=missing   ① 손볼 문서 찾기
+GET  /search-units/coverage/{doc_id}         ② 원문 + 지금 문장 보기
+POST /search-units/draft                     ③ LLM 초안 (저장 안 함)
+PUT  /search-units/coverage/{doc_id}         ④ 고친 목록 통째로 저장 → 즉시 검색됨
+```
+
+②와 ④가 **같은 URL**이다. 읽은 목록을 사용자가 고친 그대로 다시 보내면 되고, 그래서
+삭제 API가 따로 없다.
+
+**문서 상태는 셋이다.**
+
+| status | 뜻 |
+|---|---|
+| `missing` | 문장이 하나도 없다. **벡터 검색에서 절대 안 걸린다** |
+| `outdated` | 본문이 바뀐 뒤 문장을 손보지 않았다. 옛 내용 기준으로 걸린다 |
+| `ok` | 지금 본문 기준의 문장이 있다 |
+
+낡음의 기준은 `search_units.source_hash`다 — 그 문장을 쓸 때 본 본문의 해시를 행에 새겨
+두고 `answer_units.source_hash`와 비교한다. 목록은 손볼 것이 위로 오도록
+`missing → outdated → ok` 순으로 정렬한다.
+
+**`view_types`는 고정 개수가 아니다.** 지금 데이터가 문서당 `hypo_q` 1~2 + `real_q` 1 +
+`contextual` 1로 균일할 뿐, 한 유형에 문장을 여러 개 달 수 있다. 그래서 응답은 고정 필드가
+아니라 `{"hypo_q": 2, "real_q": 1, "contextual": 1}` 형태의 맵이다. 유형을 늘리려면
+[domain/search_chunk.py](../domain/search_chunk.py)의 `VIEW_TYPES`에 추가한다 — API 검증과
+초안 프롬프트가 그 목록을 본다.
+
+```jsonc
+// ④ PUT /api/v1/search-units/coverage/guide/소개
+//    보낸 목록이 곧 그 문서의 문장 전체다
+{
+  "items": [
+    { "view_type": "hypo_q",     "text": "뤼이도의 핵심 기능은 무엇인가요?" },
+    { "view_type": "real_q",     "text": "뤼이도 핵심 기능 좀 알려줘" }
+    // 여기서 뺀 문장은 삭제된다
+  ]
+}
+// 200 — 저장 후 그 문서의 문장 전체와 상태(status/units/view_types)를 돌려준다
+```
+
+| 보낸 목록에서 | 결과 |
+|---|---|
+| 빠진 문장 | **삭제**된다. 빈 배열이면 그 문서의 문장이 전부 사라진다(`status`가 `missing`이 된다) |
+| 그대로인 문장 | 임베딩을 다시 만들지 않는다. `id`도 그대로다 — 유형만 고친 경우가 여기 걸린다 |
+| 새 문장 | 그 자리에서 임베딩해 넣는다 |
+
+삭제와 저장은 **한 트랜잭션**이라 중간에 실패해도 문장이 반쯤 지워진 채 남지 않는다.
+**저장하면 곧바로 검색된다** — 재빌드를 기다릴 필요가 없다.
+
+**저장한 문장은 다음 빌드가 지우지 않는다.** `build_search_units`의 정리(prune)는 JSON이
+기준이라, 그대로 두면 콘솔에서 넣은 문장이 다음 빌드에 사라진다. 그래서 `search_units.source`로
+출처를 구분하고(`file` / `console`) 정리 대상은 `file`뿐이다. 저장한 문서의 문장은 전부
+`console`이 된다 — 사람이 한 번 손본 문서는 그 사람이 주인이라는 뜻이다.
+
+**단, JSON에 있는 문장을 지우면 다음 빌드가 되살린다.** 파일이 아직 그 문장을 갖고 있기
+때문이다(정리는 파일에 없는 것을 지우는 일이지, 파일에 있는 것을 안 넣는 일이 아니다).
+완전히 없애려면 `rag_view_sentences.json`에서도 빼야 한다 — 내보내기가 있어야 이 고리가
+닫힌다(→ 루트 README의 "백로그").
+
+**초안(③)은 저장하지 않는다.** 입력창에 채워 넣을 값을 돌려줄 뿐이고, 사람이 고른 것만 ④로
+보낸다 — 빈 칸에서 시작하면 아무도 채우지 않기 때문에 있는 API지, LLM에게 인덱스를 맡기려는
+것이 아니다. 이미 등록된 문장을 프롬프트에 함께 넣어 겹치는 초안을 피한다.
+
+아직 없는 것: 콘솔에서 넣은 문장을 JSON으로 **내보내기**. 지금은 DB에만 남아 다른 개발자의
+DB나 새 환경에는 없고, 파일에서 온 문장을 지운 것도 파일에 반영되지 않는다.
+
 ## 도메인 객체 vs API 스키마
 
 **도메인 dataclass와 API 스키마를 분리했다.**
@@ -382,6 +494,5 @@ POST /api/v1/evaluations/{qna_uuid}    # 한 건씩 채점 (판정자 LLM 1회)
 |---|---|
 | `POST /evaluations/run-pending` — 미평가 일괄 재실행 | 지금은 `POST /evaluations/{qna_uuid}`를 건별로 부른다. 수십 건을 한 번에 돌리려면 판정자 LLM이 그만큼 호출되므로 `BackgroundTasks`로 202를 먼저 주고 진행 상황은 `GET /qna?status=pending`이 줄어드는 것으로 보는 형태가 필요하다 |
 | 관리자 인증 | 이 서버의 조회·재실행 API는 사용자 질문 원문을 그대로 노출하고 재실행은 LLM 비용을 쓴다. 운영 콘솔이 백엔드를 거치지 않고 직접 붙는 구조라 인증이 이 서버에 있어야 한다 |
-| `GET /answer-units/orphans` — 검색 문장이 없는 문서 | `search_units`가 하나도 안 달린 `answer_units`는 영원히 검색되지 않는다. 인덱스 품질 점검용 |
-| `POST /admin/reindex` — 인덱스 재빌드 트리거 | 지금은 서버에 SSH로 들어가 스크립트를 돌려야 한다. 다만 수 분 걸리는 작업이라 BackgroundTasks나 작업 큐가 필요하고, 인증도 있어야 한다 |
+| `POST /admin/reindex` — 인덱스 재빌드 트리거 | 지금은 `GET /index-status`로 낡은 것을 확인하고 서버에서 스크립트를 돌려야 한다. 수 분 걸리는 작업이라 202를 먼저 주고(`BackgroundTasks`) 진행 상황은 `index-status`가 줄어드는 것으로 보는 형태가 맞다. 동시 실행 방지(`pg_advisory_lock`)가 필요하다 — 두 번 누르면 임베딩 비용이 두 배로 나간다 |
 | `GET /ask/stream` — 답변 토큰 스트리밍 | `/ask`는 LLM 2~3회 + 임베딩 1회라 체감 지연이 크다. SSE로 답변을 흘려보내면 개선된다. `core/generation.py`가 `stream=True`를 지원하도록 바뀌어야 한다 |

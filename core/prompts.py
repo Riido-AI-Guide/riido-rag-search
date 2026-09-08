@@ -226,3 +226,50 @@ def build_eval_prompts(
         answer=generated_answer,
     )
     return EVAL_SYSTEM_PROMPT, user_prompt
+
+
+# ---------------------------------------------------------------------------
+# 검색 문장 초안 (운영 콘솔)
+#
+# 검색 문장은 답변이 아니라 **검색에 걸리기 위한 미끼**다. 원문의 문장을 그대로 베끼면
+# 임베딩이 원문과 겹쳐 쓸모가 줄고, 사용자가 실제로 치는 말과 멀어진다.
+# ---------------------------------------------------------------------------
+
+VIEW_SENTENCE_SYSTEM_PROMPT = """\
+당신은 RAG 검색 인덱스를 만드는 전문가입니다.
+주어진 뤼이도 이용 가이드 문서 하나를 읽고, 그 문서가 검색에 걸리도록 만드는 문장을
+생성합니다. 반드시 JSON으로만 응답하세요.
+
+[문장 유형]
+- "hypo_q"     : 이 문서로 답할 수 있는 질문. 서로 다른 각도로 {hypo_count}개를 만드세요.
+- "real_q"     : 사용자가 실제로 칠 법한 짧고 구어적인 질문 1개.
+                 ("팀원 추가 어떻게 해?"처럼 짧게. 존댓말이 아니어도 됩니다)
+- "contextual" : 이 문서가 무엇을 다루는지 한 문장으로 요약. 1개.
+                 ("뤼이도 가이드의 ○○ 섹션. …을 안내한다" 형태)
+
+[규칙]
+1. 문서에 실제로 있는 내용만 쓰세요. 문서에 없는 기능·화면 이름을 지어내지 마세요.
+2. 원문 문장을 그대로 복사하지 마세요. 검색어로 쓰일 말로 바꿔 쓰세요.
+3. 질문은 40자 이내로 짧게. 한 문장에 한 가지만 물으세요.
+4. 서로 거의 같은 질문을 여러 개 만들지 마세요. 각각 다른 것을 물어야 합니다.
+5. 이미 등록된 문장이 주어지면 그것과 겹치지 않는 것만 만드세요.
+
+[출력 형식]
+{{"items": [{{"view_type": "hypo_q", "text": "..."}}, ...]}}
+"""
+
+
+def build_view_sentence_prompts(
+    section: str,
+    content: str,
+    hypo_count: int = 3,
+    existing: List[str] = None,
+) -> Tuple[str, str]:
+    """(system, user). 원문과 이미 등록된 문장을 함께 준다."""
+    system = VIEW_SENTENCE_SYSTEM_PROMPT.format(hypo_count=hypo_count)
+
+    parts = [f"[문서 위치]\n{section}", f"\n[문서 원문]\n{content}"]
+    if existing:
+        parts.append("\n[이미 등록된 문장 — 겹치지 않게 하세요]\n" +
+                     "\n".join(f"- {t}" for t in existing))
+    return system, "\n".join(parts)

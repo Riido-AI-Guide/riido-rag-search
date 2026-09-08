@@ -37,6 +37,33 @@ uvicorn api.main:app --reload               # 저장소 루트에서
 빈 값만 채운다. 본문 해시가 그대로면 재임베딩하지 않으므로(`유지` / `링크만 갱신`으로
 집계된다) 이미 만들어 둔 벡터는 그대로 남는다.
 
+### 가이드가 갱신되면
+
+**`build_answer_units`만 돌리면 절반만 반영된다.** 답변 본문과 링크는 최신이 되지만
+검색 인덱스는 그대로라, 답변은 새 문서인데 **검색은 옛 문서 기준**으로 남는다. 두 스크립트를
+순서대로 돌려야 한다.
+
+```bash
+python -m scripts.build_answer_units    # 본문 갱신. 끝에 "검색 인덱스 재생성 필요"가 뜬다
+python -m scripts.build_search_units    # 그 문서들의 검색 인덱스를 다시 만든다
+```
+
+낡음의 기준은 `answer_content_vectors.source_hash`다 — 그 인덱스가 어느 본문을 색인한
+것인지 행에 적어 두고 `answer_units.source_hash`와 비교해서, 본문이 바뀐 문서만 다시
+임베딩한다. 삭제된 문서는 FK CASCADE로 인덱스에서 함께 사라진다.
+
+**새로 생긴 섹션의 검색 문장은 자동으로 만들어지지 않는다.** `search_units`의 출처인
+[data/rag_view_sentences.json](data/rag_view_sentences.json)이 외부에서 만들어 커밋한
+파일이라 재생성 경로가 없어서다. 그런 문서는 원문 키워드 검색으로만 걸리는 반쪽 문서가 된다.
+사람이 채워 넣고 고치는 경로는 API로 열려 있다(→ [api/README.md](api/README.md)의 "검색 문장 관리").
+등록한 문장은 `search_units.source='console'`로 남아 다음 빌드의 정리 대상에서 빠진다.
+
+무엇이 낡았는지는 서버가 알려준다.
+
+```bash
+curl localhost:8000/api/v1/index-status
+```
+
 ### 근거 링크
 
 답변 단위마다 원문 주소(`answer_units.source_url`)를 들고 있고, `/ask` 응답의
@@ -110,6 +137,9 @@ python -m scripts.evaluate_search            # Hit@1 / Hit@3 / MRR 채점
   테스트는 무조건 수 초를 기다린다. 지연 생성으로 바꾸면 `warmup()` 본문이 실제 준비를 맡는다.
 - **`search_queries` 활용** — [core/query_transform.py](core/query_transform.py)가 변형 검색어를 2~3개
   만들지만 검색에는 `cleaned_query` 하나만 쓴다. 멀티쿼리 검색 도입 여부 미정.
+- **`rag_view_sentences.json` 내보내기** — 콘솔에서 등록한 문장(`source='console'`)은 DB에만 남아
+  다른 개발자의 DB나 새 환경에는 없다. JSON으로 내보내 커밋하는 경로가 필요하다.
+  초안 생성은 `POST /api/v1/search-units/draft`로 열렸지만, 파일을 다시 만드는 경로는 아직 없다.
 - **`rag_view_sentences.json` 생성 스크립트** — 외부에서 만들어 커밋한 파일이라
   저장소에 재생성 경로가 없다. ([data/rag_view_sentences.json](data/rag_view_sentences.json))
 - **테스트 부재** — [test_rag.py](test_rag.py)는 이름과 달리 pytest 테스트가 아니라 눈으로 확인하는

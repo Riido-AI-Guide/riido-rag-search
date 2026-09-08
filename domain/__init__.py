@@ -1,5 +1,5 @@
 from .raw_chunk import RawChunk
-from .search_chunk import SearchChunk
+from .search_chunk import VIEW_TYPES, SearchChunk
 from .search_hit import SearchHit
 from .retrieved_chunk import RetrievedChunk
 from .query import Query
@@ -10,7 +10,7 @@ from .answer import Answer, NO_SEARCH_ANSWER_TYPE
 from .qna import QnA
 
 __all__ = [
-    "RawChunk", "SearchChunk", "SearchHit", "RetrievedChunk", "Query",
+    "RawChunk", "SearchChunk", "VIEW_TYPES", "SearchHit", "RetrievedChunk", "Query",
     "ConversationTurn",
     "AnswerEvaluation", "AnswerSection", "SourceRef", "sections_to_text", "Answer", "QnA",
     "NO_SEARCH_ANSWER_TYPE",

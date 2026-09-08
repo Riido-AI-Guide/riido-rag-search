@@ -503,9 +503,12 @@ if __name__ == "__main__":
     print_stats()
 
     if report.dirty:
-        print(f"\n🔁 검색 벡터 재생성 필요: {len(report.dirty)}건")
+        # 본문이 바뀐 문서의 검색 인덱스는 여기서 갱신되지 않는다. 낡았다는 사실은
+        # answer_content_vectors.source_hash에 남으므로, 아래 명령이 그 문서만 다시 만든다.
+        print(f"\n🔁 검색 인덱스 재생성 필요: {len(report.dirty)}건")
         for doc_id in report.dirty[:10]:
             print(f"  - {doc_id}")
+        print("   → python -m scripts.build_search_units")
 
     if report.relinked:
         print(f"\n🔗 링크만 갱신: {len(report.relinked)}건 (재임베딩 불필요)")

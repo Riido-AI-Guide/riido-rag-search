@@ -16,7 +16,9 @@ from fastapi.responses import JSONResponse
 
 from api.settings import get_settings
 from core.db import close_pool, init_pool
-from api.routers import answer_units, chat, evaluations, health, qna, search_units
+from api.routers import (
+    answer_units, chat, evaluations, health, index_status, qna, search_units,
+)
 from core.evaluation import EvaluationError
 from core.generation import LlmError
 
@@ -59,13 +61,14 @@ def create_app() -> FastAPI:
 
     for router in (
         health.router, chat.router, answer_units.router,
-        search_units.router, evaluations.router, qna.router,
+        search_units.router, evaluations.router, qna.router, index_status.router,
     ):
         app.include_router(router, prefix=settings.api_prefix)
 
     @app.exception_handler(psycopg2.errors.UndefinedTable)
-    async def undefined_table_handler(request: Request, exc: psycopg2.errors.UndefinedTable):
-        """인덱스가 아직 없을 때"""
+    @app.exception_handler(psycopg2.errors.UndefinedColumn)
+    async def undefined_table_handler(request: Request, exc: psycopg2.Error):
+        """인덱스가 아직 없거나, 스키마가 코드보다 오래됐을 때(빌드 스크립트가 스키마를 맞춘다)"""
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={
