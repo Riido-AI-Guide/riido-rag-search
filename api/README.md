@@ -24,10 +24,10 @@ api/
 ├── settings.py                    HTTP 계층 정책 (CORS, 기본 top_k, 페이지 크기)
 ├── deps.py                        페이지네이션·검색 파라미터 기본값
 ├── schemas/                       HTTP 경계 Pydantic 모델
-│   ├── common.py  chat.py  units.py  health.py
+│   ├── common.py  chat.py  units.py  health.py  evaluations.py
 ├── repositories/                  DB 접근 SQL
 │   ├── units_repository.py  qna_repository.py
-├── routers/                       chat / answer_units / search_units / health
+├── routers/                       chat / answer_units / search_units / evaluations / health
 └── services/rag_service.py        질의→검색→생성→평가 오케스트레이션
 ```
 
@@ -40,6 +40,8 @@ api/
 | GET | `/api/v1/answer-units/{doc_id}` | 문서 단건 + 연결된 검색 문장 |
 | GET | `/api/v1/search-units` | **모든 검색용 문장 목록** |
 | GET | `/api/v1/search-units/stats` | view_type별 적재 통계 |
+| GET | `/api/v1/evaluations` | **저장된 답변 평가 전체 목록** |
+| GET | `/api/v1/evaluations/{qna_uuid}` | 평가 단건 |
 | GET | `/api/v1/health` | DB·인덱스 적재 상태 |
 
 `doc_id`에 슬래시가 들어가므로(`guide/팀/팀-관리`) 단건 조회는 `{doc_id:path}` 컨버터를 쓴다.
@@ -168,6 +170,53 @@ const historyAnswer = res.answers.map(a => a.text).join("\n\n")
 }
 ```
 
+### GET /api/v1/evaluations
+
+답변을 보낸 뒤 서버가 자동으로 매긴 점수를 **최근 것부터** 준다. 운영 콘솔에서 답변 품질을
+훑고, 사용자 good/bad와 대조할 때 쓴다.
+
+점수만 있는 목록은 쓸모가 없으므로 `qna_logs`를 조인해 **무엇을 채점한 것인지**(`raw_query`,
+`cleaned_query`, `answer_type`, `conversation_id`)를 함께 준다. 답변 본문(`answer_text`)은
+싣지 않는다 — 수천 자짜리 필드가 페이지마다 붙으면 목록 응답이 커진다.
+
+**채점에 실패한 답변은 여기 없다.** 평가 실패는 행을 남기지 않기 때문이다(→ 설계 메모의 LLM
+오류 처리). 목록에 없는 `qna_uuid`는 "아직 채점 안 됨"이고, 그게 곧 재실행 대상이다.
+
+| 쿼리 | 설명 |
+|---|---|
+| `limit` · `offset` | 페이지네이션. 기본 50, 상한 500 (`Settings`) |
+| `verdict` | `pass` / `fail` |
+| `issue` | `factual_error` / `insufficient` / `irrelevant` / `retrieval_miss` 중 하나가 달린 평가만 |
+| `answer_type` | 채점 대상 답변의 유형 (`step`, `no_answer` …) |
+| `q` | `raw_query`·`cleaned_query` 부분 일치 |
+
+```jsonc
+// GET /api/v1/evaluations?verdict=fail&limit=2
+{
+  "total": 37, "limit": 2, "offset": 0,
+  "items": [
+    {
+      "qna_uuid": "3f2b9c14-8a51-4e77-9d2c-6b0f5a1e7c84",
+      "conversation_id": "conv_01H8XK",
+      "raw_query": "휴지통 복구?",
+      "cleaned_query": "휴지통 복구 방법",
+      "answer_type": "no_answer",
+      "faithfulness": 1.0,
+      "answer_relevance": 1.0,
+      "context_relevance": 0.2,
+      "verdict": "fail",
+      "issues": ["retrieval_miss"],
+      "reason": "참고 문서가 질문과 무관합니다.",
+      "created_at": "2026-09-08T00:13:40.716963Z",
+      "updated_at": "2026-09-08T00:13:40.716963Z"
+    }
+  ]
+}
+```
+
+`GET /api/v1/evaluations/{qna_uuid}`는 같은 형태의 단건이다. 채점되지 않았으면 404,
+uuid 형식이 아니면 422다.
+
 ## 도메인 객체 vs API 스키마
 
 **도메인 dataclass와 API 스키마를 분리했다.**
@@ -224,7 +273,8 @@ const historyAnswer = res.answers.map(a => a.text).join("\n\n")
 
 | 제안 | 이유 |
 |---|---|
-| `GET /qna` · `POST /evaluations` — 품질 로그 조회와 평가 재실행 | 자동 채점을 놓쳤거나 프롬프트를 고쳐 다시 돌리고 싶을 때 쓸 운영 콘솔용 API. 콘솔이 백엔드를 거치지 않고 이 서버에 직접 붙으므로 관리자 인증이 함께 필요하다 |
+| `GET /qna` — 질의응답 로그 조회 (답변 본문 포함) | 평가 목록은 `GET /evaluations`로 열었지만, 채점된 답변의 본문과 아직 채점되지 않은 턴은 로그 쪽을 봐야 한다 |
+| `POST /evaluations/{qna_uuid}` — 평가 재실행 | 자동 채점을 놓쳤거나 프롬프트를 고쳐 다시 돌리고 싶을 때. `rag_service.evaluate_and_store()`가 이미 그 일을 하므로 라우터만 얹으면 되지만, 쓰기 API라 관리자 인증이 먼저 필요하다 |
 | `GET /answer-units/orphans` — 검색 문장이 없는 문서 | `search_units`가 하나도 안 달린 `answer_units`는 영원히 검색되지 않는다. 인덱스 품질 점검용 |
 | `POST /admin/reindex` — 인덱스 재빌드 트리거 | 지금은 서버에 SSH로 들어가 스크립트를 돌려야 한다. 다만 수 분 걸리는 작업이라 BackgroundTasks나 작업 큐가 필요하고, 인증도 있어야 한다 |
 | `GET /ask/stream` — 답변 토큰 스트리밍 | `/ask`는 LLM 2~3회 + 임베딩 1회라 체감 지연이 크다. SSE로 답변을 흘려보내면 개선된다. `core/generation.py`가 `stream=True`를 지원하도록 바뀌어야 한다 |
