@@ -3,6 +3,11 @@ from typing import List
 
 from domain import AnswerSection, sections_to_text
 
+# 검색을 건너뛴 인사·잡담 경로의 answer_type.
+# Answer가 만들어지지 않는 유일한 경로라 core.generation의 유형 목록에는 없고,
+# api 쪽에서만 붙는다. 채점 대상에서도 빠지므로 로그 조회가 이 값을 다시 본다.
+NO_SEARCH_ANSWER_TYPE = "no_search"
+
 
 @dataclass
 class Answer:

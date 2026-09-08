@@ -7,7 +7,9 @@ import uuid
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from domain import AnswerSection, ConversationTurn, RetrievedChunk, sections_to_text
+from domain import (
+    NO_SEARCH_ANSWER_TYPE, AnswerSection, ConversationTurn, RetrievedChunk, sections_to_text,
+)
 from api.repositories import qna_repository, units_repository
 from core.evaluation import EvaluationError, evaluate_answer
 from core.generation import generate_rag_answer
@@ -21,10 +23,6 @@ NO_SEARCH_MESSAGE = "안녕하세요! 뤼이도 이용 가이드에 대해 궁�
 
 # 대화 도중 미검색 시 메시지
 NO_SEARCH_FOLLOW_UP_MESSAGE = "더 궁금한 점이 있으면 말씀해 주세요."
-
-# 검색을 건너뛴 경로의 answer_type. Answer가 만들어지지 않는 유일한 경로라
-# core.generation의 유형 목록에 없고 여기서만 붙는다.
-NO_SEARCH_ANSWER_TYPE = "no_search"
 
 # 인사·잡담으로 대화를 시작했을 때의 제목. 그 경로엔 답변이 없어 뽑아 쓸 제목이 없다.
 NO_SEARCH_TITLE = "새 대화"

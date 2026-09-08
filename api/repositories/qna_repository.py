@@ -5,7 +5,7 @@ api/repositories/qna_repository.py — 질의응답 로그·평가 읽기/쓰기
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.db import get_cursor
-from domain import AnswerEvaluation
+from domain import NO_SEARCH_ANSWER_TYPE, AnswerEvaluation
 
 LOG_COLUMNS = (
     "qna_uuid, conversation_id, raw_query, cleaned_query, "
@@ -49,6 +49,81 @@ def insert_log(
                 answer_text, answer_type, retrieved_doc_ids,
             ),
         )
+
+
+# 로그 1건의 평가 상태. 셋은 서로 겹치지 않고 모든 행이 셋 중 하나에 들어간다.
+#   evaluated : 평가 행이 있다
+#   pending   : 평가 행이 없다. 채점을 놓쳤거나 실패한 것 — 재실행 대상이다
+#   skipped   : 인사·잡담이라 애초에 채점 대상이 아니다. 영원히 평가되지 않는다
+#
+# skipped를 따로 두지 않으면 미평가 목록이 "안녕하세요"로 가득 찬다
+# (rag_service.evaluate_and_store가 no_search를 그냥 건너뛰기 때문에 절대 줄지 않는다).
+LOG_STATUS_SQL = f"""
+    CASE
+        WHEN e.qna_uuid IS NOT NULL THEN 'evaluated'
+        WHEN l.answer_type = '{NO_SEARCH_ANSWER_TYPE}' THEN 'skipped'
+        ELSE 'pending'
+    END
+"""
+
+LOG_LIST_COLUMNS = (
+    "l.qna_uuid, l.conversation_id, l.raw_query, l.cleaned_query, "
+    "l.answer_text, l.answer_type, l.retrieved_doc_ids, l.created_at, "
+    f"({LOG_STATUS_SQL}) AS status, e.verdict"
+)
+
+# 평가는 로그 1건에 최대 1건이라(PK가 qna_uuid) 조인해도 행이 늘지 않는다
+LOG_FROM = "FROM qna_logs l LEFT JOIN answer_evaluations e ON e.qna_uuid = l.qna_uuid"
+
+
+def _log_filters(
+    status: Optional[str],
+    answer_type: Optional[str],
+    conversation_id: Optional[str],
+    q: Optional[str],
+) -> Tuple[str, list]:
+    clauses, params = [], []
+    if status:
+        # 계산식을 WHERE에 그대로 쓴다 — 별칭은 WHERE에서 참조할 수 없다
+        clauses.append(f"({LOG_STATUS_SQL}) = %s")
+        params.append(status)
+    if answer_type:
+        clauses.append("l.answer_type = %s")
+        params.append(answer_type)
+    if conversation_id:
+        clauses.append("l.conversation_id = %s")
+        params.append(conversation_id)
+    if q:
+        clauses.append("(l.raw_query ILIKE %s OR l.cleaned_query ILIKE %s)")
+        params.extend([f"%{q}%", f"%{q}%"])
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    return where, params
+
+
+def list_logs(
+    limit: int,
+    offset: int,
+    status: Optional[str] = None,
+    answer_type: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+    q: Optional[str] = None,
+) -> Tuple[int, List[Dict[str, Any]]]:
+    """
+    질의응답 로그 목록. 최근 것부터 주고, 각 행에 평가 상태를 함께 붙인다.
+
+    status='pending'이 곧 미평가(재실행 대상) 목록이다.
+    """
+    where, params = _log_filters(status, answer_type, conversation_id, q)
+    with get_cursor() as cur:
+        cur.execute(f"SELECT COUNT(*) AS total {LOG_FROM}{where};", params)
+        total = cur.fetchone()["total"]
+
+        cur.execute(
+            f"SELECT {LOG_LIST_COLUMNS} {LOG_FROM}{where} "
+            f"ORDER BY l.created_at DESC, l.qna_uuid LIMIT %s OFFSET %s;",
+            params + [limit, offset],
+        )
+        return total, cur.fetchall()
 
 
 def get_log(qna_uuid: str) -> Optional[Dict[str, Any]]:

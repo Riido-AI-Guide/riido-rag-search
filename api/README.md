@@ -24,10 +24,10 @@ api/
 ├── settings.py                    HTTP 계층 정책 (CORS, 기본 top_k, 페이지 크기)
 ├── deps.py                        페이지네이션·검색 파라미터 기본값
 ├── schemas/                       HTTP 경계 Pydantic 모델
-│   ├── common.py  chat.py  units.py  health.py  evaluations.py
+│   ├── common.py  chat.py  units.py  health.py  evaluations.py  qna.py
 ├── repositories/                  DB 접근 SQL
 │   ├── units_repository.py  qna_repository.py
-├── routers/                       chat / answer_units / search_units / evaluations / health
+├── routers/                       chat / answer_units / search_units / evaluations / qna / health
 └── services/rag_service.py        질의→검색→생성→평가 오케스트레이션
 ```
 
@@ -42,6 +42,7 @@ api/
 | GET | `/api/v1/search-units/stats` | view_type별 적재 통계 |
 | GET | `/api/v1/evaluations` | **저장된 답변 평가 전체 목록** |
 | GET | `/api/v1/evaluations/{qna_uuid}` | 평가 단건 |
+| GET | `/api/v1/qna` | **질의응답 로그 목록 — 미평가(`status=pending`) 조회** |
 | GET | `/api/v1/health` | DB·인덱스 적재 상태 |
 
 `doc_id`에 슬래시가 들어가므로(`guide/팀/팀-관리`) 단건 조회는 `{doc_id:path}` 컨버터를 쓴다.
@@ -217,6 +218,60 @@ const historyAnswer = res.answers.map(a => a.text).join("\n\n")
 `GET /api/v1/evaluations/{qna_uuid}`는 같은 형태의 단건이다. 채점되지 않았으면 404,
 uuid 형식이 아니면 422다.
 
+### GET /api/v1/qna
+
+질의응답 로그를 최근 턴부터 준다. **미평가 턴은 여기서만 보인다** — 평가에 실패하면 행을
+남기지 않는 설계라(→ 설계 메모의 LLM 오류 처리) `/evaluations`에는 애초에 나타나지 않는다.
+
+각 행의 `status`가 채점 여부다.
+
+| status | 뜻 |
+|---|---|
+| `pending` | **미평가.** 채점을 놓쳤거나 실패한 턴 — 재실행 대상이다 |
+| `evaluated` | 채점됨. `verdict`(pass/fail)가 함께 오고, 점수 전체는 `/evaluations`에 있다 |
+| `skipped` | 인사·잡담(`no_search`)이라 애초에 채점 대상이 아니다 |
+
+`skipped`를 따로 두는 이유는 그 턴들이 **영원히** 채점되지 않기 때문이다
+(`rag_service.evaluate_and_store()`가 `no_search`를 그냥 건너뛴다). 미평가에 섞이면
+재실행 목록이 "안녕하세요"로 차서 줄지 않는다. 상태 계산은
+`qna_repository.LOG_STATUS_SQL` 한 곳에만 있다.
+
+| 쿼리 | 설명 |
+|---|---|
+| `limit` · `offset` | 페이지네이션. 기본 50, 상한 500 (`Settings`) |
+| `status` | `pending` / `evaluated` / `skipped`. 그 외 값은 422 |
+| `answer_type` | `step`, `no_answer` … |
+| `conversation_id` | 한 대화의 턴만 |
+| `q` | `raw_query`·`cleaned_query` 부분 일치 |
+| `include_answer` | 답변 본문 포함 여부. 기본 `false` |
+
+답변 본문(`answer_text`)은 기본으로 빼고 `include_answer=true`일 때만 싣는다 — 수천 자짜리
+필드가 페이지마다 붙으면 목록 응답이 커진다.
+
+```jsonc
+// GET /api/v1/qna?status=pending — 미평가(재실행 대상) 목록
+{
+  "total": 4, "limit": 50, "offset": 0,
+  "items": [
+    {
+      "qna_uuid": "3f2b9c14-8a51-4e77-9d2c-6b0f5a1e7c84",
+      "conversation_id": "conv_01H8XK",
+      "raw_query": "휴지통 복구?",
+      "cleaned_query": "휴지통 복구 방법",
+      "answer_type": "no_answer",
+      "retrieved_doc_ids": ["guide/휴지통"],
+      "status": "pending",
+      "verdict": null,               // 채점된 턴에만 pass/fail이 온다
+      "created_at": "2026-09-08T00:13:40.716963Z",
+      "answer_text": null            // include_answer=true면 채워진다
+    }
+  ]
+}
+```
+
+재실행 API는 아직 없다. 지금은 이 목록으로 대상을 찾고
+`rag_service.evaluate_and_store(qna_uuid)`를 직접 부른다(→ 아래 "추가로 제안하는 API").
+
 ## 도메인 객체 vs API 스키마
 
 **도메인 dataclass와 API 스키마를 분리했다.**
@@ -273,7 +328,6 @@ uuid 형식이 아니면 422다.
 
 | 제안 | 이유 |
 |---|---|
-| `GET /qna` — 질의응답 로그 조회 (답변 본문 포함) | 평가 목록은 `GET /evaluations`로 열었지만, 채점된 답변의 본문과 아직 채점되지 않은 턴은 로그 쪽을 봐야 한다 |
 | `POST /evaluations/{qna_uuid}` — 평가 재실행 | 자동 채점을 놓쳤거나 프롬프트를 고쳐 다시 돌리고 싶을 때. `rag_service.evaluate_and_store()`가 이미 그 일을 하므로 라우터만 얹으면 되지만, 쓰기 API라 관리자 인증이 먼저 필요하다 |
 | `GET /answer-units/orphans` — 검색 문장이 없는 문서 | `search_units`가 하나도 안 달린 `answer_units`는 영원히 검색되지 않는다. 인덱스 품질 점검용 |
 | `POST /admin/reindex` — 인덱스 재빌드 트리거 | 지금은 서버에 SSH로 들어가 스크립트를 돌려야 한다. 다만 수 분 걸리는 작업이라 BackgroundTasks나 작업 큐가 필요하고, 인증도 있어야 한다 |

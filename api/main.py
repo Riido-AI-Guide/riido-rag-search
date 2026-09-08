@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 
 from api.settings import get_settings
 from core.db import close_pool, init_pool
-from api.routers import answer_units, chat, evaluations, health, search_units
+from api.routers import answer_units, chat, evaluations, health, qna, search_units
 from core.generation import LlmError
 
 logger = logging.getLogger("api")
@@ -58,7 +58,7 @@ def create_app() -> FastAPI:
 
     for router in (
         health.router, chat.router, answer_units.router,
-        search_units.router, evaluations.router,
+        search_units.router, evaluations.router, qna.router,
     ):
         app.include_router(router, prefix=settings.api_prefix)
 
