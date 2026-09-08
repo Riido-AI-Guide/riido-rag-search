@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from api.settings import get_settings
 from core.db import close_pool, init_pool
 from api.routers import answer_units, chat, evaluations, health, qna, search_units
+from core.evaluation import EvaluationError
 from core.generation import LlmError
 
 logger = logging.getLogger("api")
@@ -80,6 +81,21 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY,
             content={"detail": str(exc), "hint": "잠시 후 다시 시도해 주세요."},
+        )
+
+    @app.exception_handler(EvaluationError)
+    async def evaluation_error_handler(request: Request, exc: EvaluationError):
+        """
+        채점 실패. /ask 뒤 백그라운드로 도는 평가는 여기 오지 않는다(그쪽은 예외를 삼키고
+        미평가로 남긴다) — 결과를 기다리는 재실행 API만 이 경로를 탄다.
+        """
+        logger.warning("평가 재실행 실패: %s", exc)
+        return JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            content={
+                "detail": f"판정자가 평가에 실패했습니다: {exc}",
+                "hint": "아무것도 저장되지 않아 미평가로 남습니다. 잠시 후 다시 시도해 주세요.",
+            },
         )
 
     @app.exception_handler(psycopg2.OperationalError)

@@ -77,12 +77,16 @@ LOG_FROM = "FROM qna_logs l LEFT JOIN answer_evaluations e ON e.qna_uuid = l.qna
 
 
 def _log_filters(
+    qna_uuids: Optional[List[str]],
     status: Optional[str],
     answer_type: Optional[str],
     conversation_id: Optional[str],
     q: Optional[str],
 ) -> Tuple[str, list]:
     clauses, params = [], []
+    if qna_uuids:
+        clauses.append("l.qna_uuid = ANY(%s::uuid[])")
+        params.append(list(qna_uuids))
     if status:
         # 계산식을 WHERE에 그대로 쓴다 — 별칭은 WHERE에서 참조할 수 없다
         clauses.append(f"({LOG_STATUS_SQL}) = %s")
@@ -103,6 +107,7 @@ def _log_filters(
 def list_logs(
     limit: int,
     offset: int,
+    qna_uuids: Optional[List[str]] = None,
     status: Optional[str] = None,
     answer_type: Optional[str] = None,
     conversation_id: Optional[str] = None,
@@ -112,8 +117,9 @@ def list_logs(
     질의응답 로그 목록. 최근 것부터 주고, 각 행에 평가 상태를 함께 붙인다.
 
     status='pending'이 곧 미평가(재실행 대상) 목록이다.
+    qna_uuids를 주면 그 턴들만 한 번에 가져온다(프론트가 화면의 메시지 id를 그대로 넘긴다).
     """
-    where, params = _log_filters(status, answer_type, conversation_id, q)
+    where, params = _log_filters(qna_uuids, status, answer_type, conversation_id, q)
     with get_cursor() as cur:
         cur.execute(f"SELECT COUNT(*) AS total {LOG_FROM}{where};", params)
         total = cur.fetchone()["total"]
@@ -184,12 +190,22 @@ EVALUATION_FROM = "FROM answer_evaluations e JOIN qna_logs l ON l.qna_uuid = e.q
 
 
 def _evaluation_filters(
+    qna_uuids: Optional[List[str]],
+    conversation_id: Optional[str],
     verdict: Optional[str],
     issue: Optional[str],
     answer_type: Optional[str],
     q: Optional[str],
 ) -> Tuple[str, list]:
     clauses, params = [], []
+    if qna_uuids:
+        # 화면에 그린 메시지 여러 개의 평가를 한 번에 가져오는 경로.
+        # id마다 단건 API를 부르면 메시지 수만큼 요청이 나간다(N+1).
+        clauses.append("e.qna_uuid = ANY(%s::uuid[])")
+        params.append(list(qna_uuids))
+    if conversation_id:
+        clauses.append("l.conversation_id = %s")
+        params.append(conversation_id)
     if verdict:
         clauses.append("e.verdict = %s")
         params.append(verdict)
@@ -209,6 +225,8 @@ def _evaluation_filters(
 def list_evaluations(
     limit: int,
     offset: int,
+    qna_uuids: Optional[List[str]] = None,
+    conversation_id: Optional[str] = None,
     verdict: Optional[str] = None,
     issue: Optional[str] = None,
     answer_type: Optional[str] = None,
@@ -217,9 +235,14 @@ def list_evaluations(
     """
     저장된 평가 전체 목록. 최근 것부터 준다 — 콘솔에서 먼저 보는 건 방금 들어온 답변이다.
 
+    qna_uuids를 주면 그 턴들의 평가만 한 번에 가져온다. 채점되지 않은 id는 결과에
+    그냥 없다 — 404가 아니라 "빠진 id = 미평가"로 읽으면 된다.
+
     같은 시각에 들어온 행이 페이지 경계에서 흔들리지 않도록 qna_uuid까지 정렬에 넣는다.
     """
-    where, params = _evaluation_filters(verdict, issue, answer_type, q)
+    where, params = _evaluation_filters(
+        qna_uuids, conversation_id, verdict, issue, answer_type, q
+    )
     with get_cursor() as cur:
         cur.execute(f"SELECT COUNT(*) AS total {EVALUATION_FROM}{where};", params)
         total = cur.fetchone()["total"]

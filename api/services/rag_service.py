@@ -8,7 +8,8 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from domain import (
-    NO_SEARCH_ANSWER_TYPE, AnswerSection, ConversationTurn, RetrievedChunk, sections_to_text,
+    NO_SEARCH_ANSWER_TYPE, AnswerEvaluation, AnswerSection, ConversationTurn,
+    RetrievedChunk, sections_to_text,
 )
 from api.repositories import qna_repository, units_repository
 from core.evaluation import EvaluationError, evaluate_answer
@@ -191,42 +192,72 @@ def _save_log(result: AskResult) -> None:
         )
 
 
+class QnaLogNotFound(Exception):
+    """
+    재실행할 로그가 없다. 대화가 지워졌거나, 답변은 나갔지만 로그 저장이 실패한 턴이다.
+    다시 시도해도 생기지 않으므로 재실행 API는 404로 답한다.
+    """
+
+
+class NotEvaluableError(Exception):
+    """
+    채점 대상이 아닌 턴(인사·잡담). 근거 문서도 답변도 없어 채점할 것이 없고,
+    몇 번을 돌려도 평가 행이 생기지 않는다 — 실패가 아니라 대상이 아닌 것이다.
+    """
+
+
+def run_evaluation(qna_uuid: str) -> AnswerEvaluation:
+    """
+    로그 1건을 읽어 채점하고 저장한 뒤 결과를 돌려준다.
+
+    실패를 예외로 올리는 쪽이다 — 운영 콘솔의 재실행처럼 **결과를 기다리는 호출자**가
+    쓴다. 왜 실패했는지(로그가 없다/채점 대상이 아니다/판정자가 깨졌다)를 구분해야
+    화면에 다른 말을 띄울 수 있다.
+
+    이미 평가된 턴을 다시 돌리면 덮어쓴다(답변 1건에 평가 1건). 프롬프트를 고치고
+    다시 채점하는 것이 이 함수의 두 번째 용도다.
+    """
+    log = qna_repository.get_log(qna_uuid)
+    if log is None:
+        raise QnaLogNotFound(qna_uuid)
+
+    # 인사·잡담은 근거 문서도 답변도 없어 채점할 것이 없다
+    if log["answer_type"] == NO_SEARCH_ANSWER_TYPE:
+        raise NotEvaluableError(qna_uuid)
+
+    # 로그에는 doc_id만 남기므로 본문은 여기서 다시 읽는다.
+    # 검색된 순서를 지켜야 판정자가 보는 [참고 문서 N] 번호가 답변 당시와 같아진다.
+    doc_ids = list(log["retrieved_doc_ids"])
+    contents = units_repository.get_answer_contents(doc_ids)
+
+    missing = [d for d in doc_ids if d not in contents]
+    if missing:
+        # 재색인으로 사라진 문서. 남은 것만으로 채점한다 — 그 사실은 여기 로그에만 남는다
+        logger.warning("근거 문서가 사라져 일부를 빼고 평가한다 %s: %s", qna_uuid, missing)
+
+    evaluation = evaluate_answer(
+        question=log["cleaned_query"],
+        context_documents=[contents[d] for d in doc_ids if d in contents],
+        generated_answer=log["answer_text"],
+    )
+    qna_repository.upsert_evaluation(qna_uuid, evaluation)
+    return evaluation
+
+
 def evaluate_and_store(qna_uuid: str) -> None:
     """
-    로그 1건을 읽어 채점하고 저장. 
+    run_evaluation을 감싸 예외를 삼킨다. /ask 응답을 보낸 뒤 백그라운드로 도는 쪽이다.
 
-    /ask 응답을 보낸 뒤 백그라운드로 돌고, 운영 콘솔의 재실행도 같은 함수 사용
-    호출자가 없는 자리에서 도는 코드라 예외를 밖으로 내보내지 않는다.
-
-    실패하면 아무것도 저장 x
+    호출자가 없는 자리에서 도는 코드라 예외를 밖으로 내보내지 않는다. 실패하면
+    아무것도 저장하지 않고 미평가로 남는다 — GET /qna?status=pending으로 다시 찾아
+    재실행할 수 있다.
     """
     try:
-        log = qna_repository.get_log(qna_uuid)
-        if log is None:
-            logger.warning("평가할 로그가 없다: %s", qna_uuid)
-            return
-
-        # 인사·잡담은 근거 문서도 답변도 없어 채점할 것이 없다
-        if log["answer_type"] == NO_SEARCH_ANSWER_TYPE:
-            return
-
-        # 로그에는 doc_id만 남기므로 본문은 여기서 다시 읽는다.
-        # 검색된 순서를 지켜야 판정자가 보는 [참고 문서 N] 번호가 답변 당시와 같아진다.
-        doc_ids = list(log["retrieved_doc_ids"])
-        contents = units_repository.get_answer_contents(doc_ids)
-
-        missing = [d for d in doc_ids if d not in contents]
-        if missing:
-            # 재색인으로 사라진 문서. 남은 것만으로 채점한다 — 그 사실은 여기 로그에만 남는다
-            logger.warning("근거 문서가 사라져 일부를 빼고 평가한다 %s: %s", qna_uuid, missing)
-
-        evaluation = evaluate_answer(
-            question=log["cleaned_query"],
-            context_documents=[contents[d] for d in doc_ids if d in contents],
-            generated_answer=log["answer_text"],
-        )
-        qna_repository.upsert_evaluation(qna_uuid, evaluation)
-
+        run_evaluation(qna_uuid)
+    except QnaLogNotFound:
+        logger.warning("평가할 로그가 없다: %s", qna_uuid)
+    except NotEvaluableError:
+        pass  # 인사·잡담. 정상 경로다
     except EvaluationError as e:
         logger.warning("답변 평가 실패 — 미평가로 남는다 %s: %s", qna_uuid, e)
     except Exception:

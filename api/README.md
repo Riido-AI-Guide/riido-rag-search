@@ -40,9 +40,10 @@ api/
 | GET | `/api/v1/answer-units/{doc_id}` | 문서 단건 + 연결된 검색 문장 |
 | GET | `/api/v1/search-units` | **모든 검색용 문장 목록** |
 | GET | `/api/v1/search-units/stats` | view_type별 적재 통계 |
-| GET | `/api/v1/evaluations` | **저장된 답변 평가 전체 목록** |
+| GET | `/api/v1/evaluations` | **저장된 답변 평가 목록 — id 여러 개 한 번에 조회** |
 | GET | `/api/v1/evaluations/{qna_uuid}` | 평가 단건 |
 | GET | `/api/v1/qna` | **질의응답 로그 목록 — 미평가(`status=pending`) 조회** |
+| POST | `/api/v1/evaluations/{qna_uuid}` | **평가 실행 / 재실행** |
 | GET | `/api/v1/health` | DB·인덱스 적재 상태 |
 
 `doc_id`에 슬래시가 들어가므로(`guide/팀/팀-관리`) 단건 조회는 `{doc_id:path}` 컨버터를 쓴다.
@@ -186,6 +187,8 @@ const historyAnswer = res.answers.map(a => a.text).join("\n\n")
 | 쿼리 | 설명 |
 |---|---|
 | `limit` · `offset` | 페이지네이션. 기본 50, 상한 500 (`Settings`) |
+| `qna_uuid` | **이 턴들의 평가만.** 반복해 넘긴다: `?qna_uuid=A&qna_uuid=B`. 한 번에 500개까지 |
+| `conversation_id` | 한 대화의 평가만 |
 | `verdict` | `pass` / `fail` |
 | `issue` | `factual_error` / `insufficient` / `irrelevant` / `retrieval_miss` 중 하나가 달린 평가만 |
 | `answer_type` | 채점 대상 답변의 유형 (`step`, `no_answer` …) |
@@ -215,6 +218,26 @@ const historyAnswer = res.answers.map(a => a.text).join("\n\n")
 }
 ```
 
+**여러 개를 볼 때 단건 API를 반복 호출하지 말 것.** 단건은 uuid 하나를 이미 알고 그것만
+펼쳐 볼 때(상세 패널)를 위한 것이다. 화면에 메시지가 20개 떠 있으면 요청도 20번 나간다.
+
+```js
+// ✗ N+1 — 메시지 수만큼 요청이 나간다
+await Promise.all(ids.map(id => fetch(`/api/v1/evaluations/${id}`)))
+
+// ✓ 한 번에
+const qs = ids.map(id => `qna_uuid=${id}`).join("&")
+const { items } = await fetch(`/api/v1/evaluations?${qs}&limit=${ids.length}`).then(r => r.json())
+const byId = new Map(items.map(e => [e.qna_uuid, e]))   // 맵에 없는 메시지 = 평가 없음
+```
+
+`limit`을 id 개수만큼 함께 올려야 한다. id를 100개 넘겨도 `limit`이 기본값 50이면 50건만
+온다 — 필터와 페이지네이션은 서로 모른다. 한 대화 전체라면 `?conversation_id=...` 쪽이 간단하다.
+
+**요청한 id가 응답에 다 오지 않는다.** 채점되지 않은 턴은 평가 행이 없어서 그냥 빠진다 —
+오류가 아니다. 맵에 없는 메시지는 "평가 없음"으로 그리고, 왜 없는지(미평가인지 채점 대상이
+아닌지)가 필요하면 `GET /qna`의 `status`를 본다.
+
 `GET /api/v1/evaluations/{qna_uuid}`는 같은 형태의 단건이다. 채점되지 않았으면 404,
 uuid 형식이 아니면 422다.
 
@@ -239,6 +262,7 @@ uuid 형식이 아니면 422다.
 | 쿼리 | 설명 |
 |---|---|
 | `limit` · `offset` | 페이지네이션. 기본 50, 상한 500 (`Settings`) |
+| `qna_uuid` | 이 턴들만. 반복해 넘긴다: `?qna_uuid=A&qna_uuid=B`. 한 번에 500개까지 |
 | `status` | `pending` / `evaluated` / `skipped`. 그 외 값은 422 |
 | `answer_type` | `step`, `no_answer` … |
 | `conversation_id` | 한 대화의 턴만 |
@@ -269,8 +293,36 @@ uuid 형식이 아니면 422다.
 }
 ```
 
-재실행 API는 아직 없다. 지금은 이 목록으로 대상을 찾고
-`rag_service.evaluate_and_store(qna_uuid)`를 직접 부른다(→ 아래 "추가로 제안하는 API").
+미평가를 다시 돌리는 흐름은 이렇다.
+
+```
+GET  /api/v1/qna?status=pending        # 재실행 대상 찾기
+POST /api/v1/evaluations/{qna_uuid}    # 한 건씩 채점 (판정자 LLM 1회)
+```
+
+### POST /api/v1/evaluations/{qna_uuid}
+
+그 턴을 **지금 채점**하고 결과를 돌려준다. 쓰임이 둘이다.
+
+1. **미평가 재실행** — `/ask` 뒤 백그라운드 채점을 놓쳤거나(프로세스 종료) 판정자가 실패한 턴.
+   `GET /qna?status=pending`으로 찾아 이걸 부른다
+2. **재채점** — 프롬프트를 고친 뒤 이미 채점된 턴을 다시 매긴다. 답변 1건에 평가 1건이라
+   덮어쓴다(`updated_at`만 갱신된다)
+
+응답은 `GET /evaluations`의 항목과 같은 모양이다. **판정자 LLM을 1회 호출하므로 수 초 걸린다** —
+응답을 기다렸다가 그대로 화면에 반영하면 된다.
+
+| 상태 | 뜻 |
+|---|---|
+| 200 | 채점 완료. 결과가 저장되었다 |
+| 404 | 로그가 없다. 대화가 지워졌거나 로그 저장이 실패했던 턴이라 다시 눌러도 같다 |
+| 409 | 인사·잡담(`no_search`)이라 채점 대상이 아니다. `GET /qna`의 `skipped`가 이 턴들이다 |
+| 502 | 판정자가 실패했다. **아무것도 저장되지 않아 미평가로 남는다** — 다시 시도할 수 있다 |
+| 422 | uuid 형식이 아니다 |
+
+일괄 재실행은 없다. 수십 건이면 판정자 LLM도 수십 번 호출되어 응답 안에서 끝낼 수 없고,
+`BackgroundTasks`로 돌리며 진행 상황을 보여줄 방법이 따로 필요하다(→ "추가로 제안하는 API").
+지금은 `GET /qna?status=pending`의 목록을 클라이언트가 순회하며 건별로 부르면 된다.
 
 ## 도메인 객체 vs API 스키마
 
@@ -328,7 +380,8 @@ uuid 형식이 아니면 422다.
 
 | 제안 | 이유 |
 |---|---|
-| `POST /evaluations/{qna_uuid}` — 평가 재실행 | 자동 채점을 놓쳤거나 프롬프트를 고쳐 다시 돌리고 싶을 때. `rag_service.evaluate_and_store()`가 이미 그 일을 하므로 라우터만 얹으면 되지만, 쓰기 API라 관리자 인증이 먼저 필요하다 |
+| `POST /evaluations/run-pending` — 미평가 일괄 재실행 | 지금은 `POST /evaluations/{qna_uuid}`를 건별로 부른다. 수십 건을 한 번에 돌리려면 판정자 LLM이 그만큼 호출되므로 `BackgroundTasks`로 202를 먼저 주고 진행 상황은 `GET /qna?status=pending`이 줄어드는 것으로 보는 형태가 필요하다 |
+| 관리자 인증 | 이 서버의 조회·재실행 API는 사용자 질문 원문을 그대로 노출하고 재실행은 LLM 비용을 쓴다. 운영 콘솔이 백엔드를 거치지 않고 직접 붙는 구조라 인증이 이 서버에 있어야 한다 |
 | `GET /answer-units/orphans` — 검색 문장이 없는 문서 | `search_units`가 하나도 안 달린 `answer_units`는 영원히 검색되지 않는다. 인덱스 품질 점검용 |
 | `POST /admin/reindex` — 인덱스 재빌드 트리거 | 지금은 서버에 SSH로 들어가 스크립트를 돌려야 한다. 다만 수 분 걸리는 작업이라 BackgroundTasks나 작업 큐가 필요하고, 인증도 있어야 한다 |
 | `GET /ask/stream` — 답변 토큰 스트리밍 | `/ask`는 LLM 2~3회 + 임베딩 1회라 체감 지연이 크다. SSE로 답변을 흘려보내면 개선된다. `core/generation.py`가 `stream=True`를 지원하도록 바뀌어야 한다 |
