@@ -7,10 +7,21 @@ from typing import Any, Dict, List, Optional, Tuple
 from core.db import get_cursor
 
 ANSWER_COLUMNS = (
-    "doc_id, title, section, source_type, content, ord_idx, "
-    "COALESCE(source_url, '') AS source_url"
+    "a.doc_id, a.title, a.section, a.source_type, a.content, a.ord_idx, "
+    "COALESCE(a.source_url, '') AS source_url"
 )
 SEARCH_COLUMNS = "id, doc_id, view_type, text"
+
+# 문서에 달린 검색 문장을 유형별로 센다. 목록에서 "이 문서는 어떻게 검색되나"를
+# 한눈에 보려는 것이라, 유형을 고정 필드로 두지 않고 있는 것만 맵으로 준다
+# (한 유형에 문장이 여러 개일 수 있고, 유형 자체도 늘어날 수 있다).
+VIEW_TYPE_COUNTS_SQL = """
+    LEFT JOIN LATERAL (
+        SELECT jsonb_object_agg(view_type, cnt) AS view_types
+        FROM (SELECT view_type, COUNT(*)::int AS cnt
+                FROM search_units WHERE doc_id = a.doc_id GROUP BY view_type) t
+    ) v ON TRUE
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -33,13 +44,15 @@ def list_answer_units(
     limit: int, offset: int, source_type: Optional[str] = None, q: Optional[str] = None
 ) -> Tuple[int, List[Dict[str, Any]]]:
     where, params = _answer_filters(source_type, q)
+    # 필터는 answer_units 컬럼만 보므로 별칭을 붙여도 그대로 쓸 수 있다
     with get_cursor() as cur:
-        cur.execute(f"SELECT COUNT(*) AS total FROM answer_units{where};", params)
+        cur.execute(f"SELECT COUNT(*) AS total FROM answer_units a{where};", params)
         total = cur.fetchone()["total"]
 
         cur.execute(
-            f"SELECT {ANSWER_COLUMNS} FROM answer_units{where} "
-            f"ORDER BY source_type, ord_idx, doc_id LIMIT %s OFFSET %s;",
+            f"SELECT {ANSWER_COLUMNS}, COALESCE(v.view_types, '{{}}'::jsonb) AS view_types "
+            f"FROM answer_units a{VIEW_TYPE_COUNTS_SQL}{where} "
+            f"ORDER BY a.source_type, a.ord_idx, a.doc_id LIMIT %s OFFSET %s;",
             params + [limit, offset],
         )
         return total, cur.fetchall()
@@ -47,7 +60,7 @@ def list_answer_units(
 
 def get_answer_unit(doc_id: str) -> Optional[Dict[str, Any]]:
     with get_cursor() as cur:
-        cur.execute(f"SELECT {ANSWER_COLUMNS} FROM answer_units WHERE doc_id = %s;", (doc_id,))
+        cur.execute(f"SELECT {ANSWER_COLUMNS} FROM answer_units a WHERE a.doc_id = %s;", (doc_id,))
         return cur.fetchone()
 
 

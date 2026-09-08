@@ -50,6 +50,26 @@ class AnswerUnitOut(BaseModel):
         )
 
 
+class AnswerUnitListItem(AnswerUnitOut):
+    """
+    목록 행 — 이 문서가 **어떻게 검색되는지**를 함께 준다.
+
+    유형을 고정 필드로 두지 않는다. 한 유형에 문장이 여러 개일 수 있고 유형 자체도
+    늘어날 수 있어서(→ domain/search_chunk.py의 VIEW_TYPES), 있는 것만 맵으로 준다.
+    빈 맵이면 검색 문장이 하나도 없다는 뜻이고, 그 문서는 벡터 검색에서 걸리지 않는다.
+    """
+    view_types: Dict[str, int] = Field(
+        default_factory=dict,
+        description="이 문서에 달린 검색 문장 수(유형별). 비어 있으면 벡터 검색에서 빠진 문서다",
+        examples=[{"hypo_q": 2, "real_q": 1, "contextual": 1}],
+    )
+
+    @classmethod
+    def from_row(cls, row: Dict[str, Any], include_content: bool = True) -> "AnswerUnitListItem":
+        base = AnswerUnitOut.from_row(row, include_content)
+        return cls(**base.model_dump(), view_types=dict(row["view_types"] or {}))
+
+
 class SearchUnitOut(BaseModel):
     id: int
     doc_id: str = Field(description="이 문장이 가리키는 answer_units 문서")
