@@ -3,7 +3,7 @@ from typing import List
 from fastapi import APIRouter
 
 from api.repositories import units_repository as repo
-from api.schemas.health import HealthResponse, TableStatus
+from api.schemas.health import BackendSchemaStatus, HealthResponse, TableStatus
 
 router = APIRouter(tags=["health"])
 
@@ -14,6 +14,10 @@ INDEX_TABLES = ["answer_units", "search_units"]
 LOG_TABLES = ["qna_logs", "answer_evaluations"]
 
 WATCHED_TABLES = INDEX_TABLES + LOG_TABLES
+
+# 백엔드 소유 테이블. 있는지만 알려주고 status 판정에는 넣지 않는다 —
+# 없어도 이 서비스는 정상이고 GET /feedback만 못 쓴다.
+BACKEND_TABLE = "app.message_feedbacks"
 
 INDEX_HINT = (
     "python -m scripts.build_answer_units → python -m scripts.build_search_units 순으로 "
@@ -33,11 +37,18 @@ def health() -> HealthResponse:
     except Exception as e:
         return HealthResponse(status="down", database=False, hint=f"DB 연결 실패: {e}")
 
+    # 판정과 분리해서 따로 읽는다. 실패해도 헬스 응답 자체가 죽지는 않게 한다
+    try:
+        exists, rows = repo.table_status(BACKEND_TABLE)
+        backend = BackendSchemaStatus(table=BACKEND_TABLE, available=exists, rows=rows)
+    except Exception:
+        backend = BackendSchemaStatus(table=BACKEND_TABLE, available=False)
+
     missing = [s.table for s in statuses if not s.exists]
     empty = [s.table for s in statuses if s.exists and s.rows == 0 and s.table in INDEX_TABLES]
 
     if not missing and not empty:
-        return HealthResponse(status="ok", database=True, tables=statuses)
+        return HealthResponse(status="ok", database=True, tables=statuses, backend=backend)
 
     hints: List[str] = []
     if missing:
@@ -49,4 +60,6 @@ def health() -> HealthResponse:
     if any(t in LOG_TABLES for t in missing):
         hints.append(LOG_HINT)
 
-    return HealthResponse(status="degraded", database=True, tables=statuses, hint=" ".join(hints))
+    return HealthResponse(
+        status="degraded", database=True, tables=statuses, backend=backend, hint=" ".join(hints)
+    )

@@ -24,10 +24,12 @@ api/
 ├── settings.py                    HTTP 계층 정책 (CORS, 기본 top_k, 페이지 크기)
 ├── deps.py                        페이지네이션·검색 파라미터 기본값
 ├── schemas/                       HTTP 경계 Pydantic 모델
-│   ├── common.py  chat.py  units.py  health.py  evaluations.py  qna.py  index_status.py  coverage.py
+│   ├── common.py  chat.py  units.py  health.py  evaluations.py  qna.py
+│   ├── index_status.py  coverage.py  feedback.py
 ├── repositories/                  DB 접근 SQL
-│   ├── units_repository.py  qna_repository.py
-├── routers/                       chat / answer_units / search_units / evaluations / qna / index_status / health
+│   ├── units_repository.py  qna_repository.py  feedback_repository.py
+├── routers/                       chat / answer_units / search_units / evaluations / qna
+│                                  index_status / feedback / health
 └── services/                      rag_service.py  search_units_service.py
 ```
 
@@ -50,6 +52,9 @@ api/
 | GET | `/api/v1/qna` | **질의응답 로그 목록 — 미평가(`status=pending`) 조회** |
 | POST | `/api/v1/evaluations/run` | **평가 일괄 실행 / 재실행 (여러 건)** |
 | POST | `/api/v1/evaluations/{qna_uuid}` | 평가 실행 / 재실행 (1건, 결과를 기다린다) |
+| GET | `/api/v1/feedback` | **사용자 피드백 목록 (자동 평가와 대조)** |
+| GET | `/api/v1/feedback/stats` | rating × verdict 교차표 |
+| GET | `/api/v1/feedback/{qna_uuid}` | 피드백 단건 (답변 본문 포함) |
 | GET | `/api/v1/index-status` | **인덱스가 본문을 따라잡았는지 (재빌드 필요 여부)** |
 | GET | `/api/v1/health` | DB·인덱스 적재 상태 |
 
@@ -487,6 +492,69 @@ git diff data/rag_view_sentences.json     # 콘솔에서 손댄 것만 뜬다
 것이 아니다. 이미 등록된 문장을 프롬프트에 함께 넣어 겹치는 초안을 피한다.
 
 
+
+### 사용자 피드백 대조 — GET /api/v1/feedback
+
+백엔드가 쌓는 좋아요/싫어요(`app.message_feedbacks`)와 이쪽 판정자 점수를 **`qna_uuid`로
+맞춰** 한 줄에 놓는다. 자동 채점이 사람의 판단과 얼마나 맞는지 보는 화면이다.
+
+**백엔드 스키마를 읽는 유일한 곳이다.** 같은 데이터베이스의 다른 스키마라 `DATABASE_URL`은
+그대로이고, `app.message_feedbacks`처럼 스키마를 명시해 **읽기만** 한다 — 그 스키마의 주인은
+백엔드이므로 여기서 CREATE/ALTER/DROP을 하지 않는다. 뷰를 만들지 않은 것도 같은 이유다:
+뷰는 카탈로그에 의존성을 남겨 백엔드가 그 테이블을 고칠 때 그쪽 마이그레이션을 막을 수 있다.
+SQL은 [feedback_repository.py](repositories/feedback_repository.py) 한 곳에만 둔다.
+
+`/ask` 경로에서는 부르지 않는다. 답변 도중에 남의 테이블을 읽으면 그쪽 장애가 답변 실패가
+된다 — 이 화면은 답변과 무관한 조회다.
+
+| agreement | 뜻 |
+|---|---|
+| `match` | 사용자와 판정자가 같은 방향 (GOOD↔pass, BAD↔fail) |
+| `mismatch` | 엇갈림. **`rating=BAD` + `verdict=pass`가 프롬프트를 고칠 1순위 표본이다** |
+| `unevaluated` | 아직 채점되지 않은 턴. `POST /evaluations/run`으로 돌리면 대조에 들어온다 |
+
+```jsonc
+// GET /api/v1/feedback?agreement=mismatch&rating=BAD
+{
+  "qna_uuid": "2e964097-…",
+  "message_id": 36,
+  "rating": "BAD", "reason": "BROKEN_LINK",       // 사용자가 고른 항목
+  "raw_query": "그럼 권한은 어떻게 바꿔?",
+  "verdict": "fail", "issues": ["insufficient"],  // 판정자
+  "faithfulness": 1.0, "answer_relevance": 0.6, "context_relevance": 0.8,
+  "agreement": "match"
+}
+```
+
+단건(`/feedback/{qna_uuid}`)은 여기에 **답변 본문과 검색된 문서 id**를 더 준다 — 사용자가 왜
+그렇게 눌렀는지 되짚으려면 그 두 개가 필요하다. 피드백이 없는 턴이면 404이고, 채점 결과만
+보려면 `GET /evaluations/{qna_uuid}`를 쓴다.
+
+**피드백은 있는데 우리 로그가 없는 행도 준다.** 백엔드가 `qna_uuid`를 저장하기 전의
+메시지들이 그렇다(지금 ASSISTANT 메시지 18건 중 2건만 `qna_uuid`가 있다). 그런 행은
+`raw_query`가 null이고 `agreement`는 `unevaluated`다 — 조용히 빠지면 피드백 수가 맞지 않는다.
+
+**두 어휘는 정의역이 다르다.** 사용자의 `reason`(12종)과 판정자의 `issues`(4종)는 겹치는
+부분만 대응된다. 특히 `BROKEN_LINK`는 **판정자가 낼 수 없는 항목이다** — 텍스트만 보고
+링크가 살아 있는지 알 수 없기 때문이다(→ [core/prompts.py](../core/prompts.py)의
+`EVAL_ISSUE_CODES` 주석). 그런 불만은 채점이 아니라 빌드 때 링크를 검사해 잡을 일이다.
+
+**조인 키의 타입이 다르다.** 백엔드는 `varchar`, 이쪽은 `uuid`라 문자열로 맞춰 조인한다
+(`l.qna_uuid::text = f.qna_uuid`). `f.qna_uuid::uuid`로 캐스팅하면 값이 uuid 형식이 아닌
+행 하나에 쿼리 전체가 죽는다. 백엔드가 `uuid`로 바꾸면 이 캐스팅은 없앨 수 있다.
+
+이 DB에 `app` 스키마가 없으면(백엔드를 함께 띄우지 않은 개발 환경) 503과 함께 그 사실을
+알려준다. 다른 API는 영향을 받지 않는다.
+
+연결 상태는 `GET /health`의 `backend` 필드로도 보인다.
+
+```jsonc
+"backend": { "table": "app.message_feedbacks", "available": true, "rows": 1 }
+```
+
+**이 값은 `status` 판정에 넣지 않는다.** 백엔드 스키마가 없어도 답변·검색·채점은 모두
+정상이고 `/feedback` 하나만 못 쓴다. 남의 스키마 때문에 이 서비스가 `degraded`로 뜨면
+헬스체크를 로드밸런서나 알림에 물릴 수 없다.
 
 ## 도메인 객체 vs API 스키마
 

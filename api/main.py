@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from api.settings import get_settings
 from core.db import close_pool, init_pool
 from api.routers import (
-    answer_units, chat, evaluations, health, index_status, qna, search_units,
+    answer_units, chat, evaluations, feedback, health, index_status, qna, search_units,
 )
 from core.evaluation import EvaluationError
 from core.generation import LlmError
@@ -62,6 +62,7 @@ def create_app() -> FastAPI:
     for router in (
         health.router, chat.router, answer_units.router,
         search_units.router, evaluations.router, qna.router, index_status.router,
+        feedback.router,
     ):
         app.include_router(router, prefix=settings.api_prefix)
 
