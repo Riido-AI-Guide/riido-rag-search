@@ -1,12 +1,8 @@
 """
 api/repositories/feedback_repository.py — 사용자 피드백(app.message_feedbacks) 대조 조회
 
-**백엔드 소유 스키마를 읽는 유일한 곳이다.** 읽기만 한다 — app 스키마에 CREATE/ALTER/DROP을
-하지 않는다(그쪽의 마이그레이션이 주인이다). 파일을 따로 둔 것도 그 경계를 눈에 보이게
-하기 위해서다.
-
-/ask 경로에서는 부르지 않는다. 답변 도중에 남의 테이블을 읽으면 그쪽 장애가 답변 실패가 된다.
-여기는 운영 콘솔 조회 전용이다.
+백엔드 소유 스키마(사용자 피드백)를 읽는 유일한 곳 (READ만 한다!)
+— app 스키마에 CREATE/ALTER/DROP을 하지 않는다(그쪽의 마이그레이션이 주인이다)
 """
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -20,7 +16,7 @@ class BackendSchemaMissing(Exception):
     """이 DB에 백엔드 스키마(app)가 없다. 백엔드를 함께 띄우지 않은 개발 환경이다."""
 
 
-# qna_uuid를 문자열로 맞춰 조인한다. 백엔드는 varchar, 이쪽은 uuid라 타입이 다르고,
+# qna_uuid를 문자열로 맞춰 조인. 백엔드는 varchar, 이쪽은 uuid라 타입이 다르고,
 # f.qna_uuid::uuid로 캐스팅하면 값이 uuid 형식이 아닌 행 하나에 쿼리 전체가 죽는다.
 # (행 수가 적어 인덱스를 못 타는 비용은 무시할 만하다. 백엔드가 uuid로 바꾸면 정리된다)
 FEEDBACK_FROM = f"""
@@ -29,8 +25,7 @@ FEEDBACK_FROM = f"""
     LEFT JOIN answer_evaluations e ON e.qna_uuid::text = f.qna_uuid
 """
 
-# 사용자 평가와 판정자 평가가 같은 방향인지. 이 대조가 이 API의 존재 이유다 —
-# 어긋난 건(특히 BAD인데 pass)이 프롬프트를 고칠 표본이다.
+# 사용자 평가와 판정자 평가가 같은 방향인지 대조
 AGREEMENT_SQL = """
     CASE
         WHEN e.verdict IS NULL THEN 'unevaluated'
@@ -66,11 +61,7 @@ def list_feedback(
     q: Optional[str] = None,
 ) -> Tuple[int, List[Dict[str, Any]]]:
     """
-    피드백을 최근 것부터. 답변 본문(answer_text)은 싣지 않는다 — 단건 조회에 있다.
-
-    피드백은 있는데 우리 로그가 없는 경우가 있다(백엔드가 qna_uuid를 저장하기 전의 메시지,
-    또는 로그가 지워진 턴). 그런 행도 빼지 않고 준다 — 로그 쪽 필드가 null이고
-    agreement는 unevaluated다. 조용히 사라지면 "피드백 수가 왜 다르지"가 된다.
+    피드백 최근 순 조회. 답변 본문(answer_text)은 미포함
     """
     clauses, params = [], []
     if rating:
@@ -104,10 +95,7 @@ def list_feedback(
 
 def get_feedback(qna_uuid: str) -> Optional[Dict[str, Any]]:
     """
-    qna_uuid로 피드백 1건 + 그 턴의 로그·평가 전체(답변 본문 포함).
-
-    메시지 1건에 피드백 1건이고(app 쪽 UNIQUE 제약) 메시지와 qna_uuid가 1:1이라 보통
-    한 행이지만, 그 1:1은 DB가 강제하지 않으므로 최신 것을 준다.
+    qna_uuid로 피드백 1건 + 그 턴의 로그·평가 전체(답변 본문 포함) 조회. (메세지와 피드백은 1:1)
     """
     with get_cursor() as cur:
         _ensure_schema(cur)

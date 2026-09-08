@@ -12,9 +12,7 @@ ANSWER_COLUMNS = (
 )
 SEARCH_COLUMNS = "id, doc_id, view_type, text"
 
-# 문서에 달린 검색 문장을 유형별로 센다. 목록에서 "이 문서는 어떻게 검색되나"를
-# 한눈에 보려는 것이라, 유형을 고정 필드로 두지 않고 있는 것만 맵으로 준다
-# (한 유형에 문장이 여러 개일 수 있고, 유형 자체도 늘어날 수 있다).
+# 문서에 달린 검색 문장의 유형별 갯수
 VIEW_TYPE_COUNTS_SQL = """
     LEFT JOIN LATERAL (
         SELECT jsonb_object_agg(view_type, cnt) AS view_types
@@ -337,14 +335,9 @@ def get_sentence_vectors(doc_id: str) -> Dict[str, str]:
 
 def replace_doc_sentences(doc_id: str, rows: List[Dict[str, Any]]) -> None:
     """
-    그 문서의 검색 문장을 rows와 **같은 상태로 만든다.** 보낸 목록에 없는 문장은 지운다 —
-    콘솔이 화면의 목록을 통째로 보내오므로, 사람이 지운 줄은 여기서 사라진다.
+    그 문서의 검색 문장을 rows와 같은 상태로 만든다 (완전 덮어쓰기)
 
-    삭제와 등록이 한 트랜잭션이다(get_cursor가 블록 끝에서 commit한다). 중간에 실패하면
-    문장이 반쯤 지워진 상태로 남지 않는다.
-
-    남은 문장은 출처를 console로 바꾼다 — 사람이 한 번 손본 문서의 문장은 그 사람이
-    주인이라는 뜻이고, 그래야 다음 빌드의 prune(파일 기준 정리)이 건드리지 않는다.
+    삭제와 등록이 한 트랜잭션이다(get_cursor가 블록 끝에서 commit한다). 중간에 실패하면 문장이 반쯤 지워진 상태로 남지 않는다.
 
     JSON에 있는 문장을 지운 경우에는 다음 빌드가 그 문장을 다시 넣는다(파일이 아직 그
     문장을 갖고 있으므로). 완전히 없애려면 rag_view_sentences.json에서도 빼야 한다.
@@ -376,13 +369,7 @@ def export_view_sentences() -> List[Dict[str, Any]]:
     """
     rag_view_sentences.json과 같은 모양·같은 순서로 문장 전체를 준다.
 
-    정렬은 파일과 맞춘다(doc_id → view_type → 적재 순). 순서가 흔들리면 저장소에
-    커밋할 때 diff가 파일 전체로 번져서, 무엇이 실제로 바뀌었는지 볼 수 없다.
-    (텍스트 순으로 정렬하면 지금 파일과 어긋난다 — 적재 순이 맞다. 다만 한 문서에
-    같은 유형의 문장이 둘 이상 있을 때, 콘솔에서 다시 저장하면 그 안에서 순서가 바뀔 수 있다.)
-
-    source(file/console)는 넣지 않는다 — 파일 형식에 없는 키이고,
-    파일에 담긴 이상 그 문장의 주인은 파일이다.
+    정렬은 파일과 맞춘다(doc_id → view_type → 적재 순)
     """
     with get_cursor() as cur:
         cur.execute("""

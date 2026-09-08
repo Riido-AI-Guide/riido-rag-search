@@ -27,13 +27,10 @@ def insert_log(
     conversation_id: Optional[str] = None,
 ) -> None:
     """
-    /ask 한 턴을 기록한다. 답변을 보내기 전에 동기로 부른다.
+    /ask 한 턴을 기록. 답변을 보내기 전에 동기로 부른다.
+    응답 뒤 평가가 돌지 못해도 나중에 재평가할 수 있도록 로그를 남김
 
-    평가는 응답 뒤에 돌지만 이 행은 먼저 있어야 한다 — 행이 없으면 나중에
-    재평가할 대상 자체를 찾을 수 없다.
-
-    같은 uuid가 이미 있으면 아무것도 하지 않는다. uuid4가 겹칠 일은 없고,
-    재시도로 두 번 들어오는 경우에만 걸린다.
+    같은 uuid가 이미 있는 경우 무시
     """
     with get_cursor() as cur:
         cur.execute(
@@ -51,13 +48,10 @@ def insert_log(
         )
 
 
-# 로그 1건의 평가 상태. 셋은 서로 겹치지 않고 모든 행이 셋 중 하나에 들어간다.
+# 로그 1건의 평가 상태
 #   evaluated : 평가 행이 있다
 #   pending   : 평가 행이 없다. 채점을 놓쳤거나 실패한 것 — 재실행 대상이다
-#   skipped   : 인사·잡담이라 애초에 채점 대상이 아니다. 영원히 평가되지 않는다
-#
-# skipped를 따로 두지 않으면 미평가 목록이 "안녕하세요"로 가득 찬다
-# (rag_service.evaluate_and_store가 no_search를 그냥 건너뛰기 때문에 절대 줄지 않는다).
+#   skipped   : 인사·잡담 등 채점이 불필요한 경우
 LOG_STATUS_SQL = f"""
     CASE
         WHEN e.qna_uuid IS NOT NULL THEN 'evaluated'
@@ -114,10 +108,9 @@ def list_logs(
     q: Optional[str] = None,
 ) -> Tuple[int, List[Dict[str, Any]]]:
     """
-    질의응답 로그 목록. 최근 것부터 주고, 각 행에 평가 상태를 함께 붙인다.
+    질의응답 로그 목록. (최근 순)  + 평가 상태
 
-    status='pending'이 곧 미평가(재실행 대상) 목록이다.
-    qna_uuids를 주면 그 턴들만 한 번에 가져온다(프론트가 화면의 메시지 id를 그대로 넘긴다).
+    qna_uuids 목록을 주면 그 턴들만 한 번에 가져온다
     """
     where, params = _log_filters(qna_uuids, status, answer_type, conversation_id, q)
     with get_cursor() as cur:
@@ -145,10 +138,8 @@ def get_log(qna_uuid: str) -> Optional[Dict[str, Any]]:
 
 def upsert_evaluation(qna_uuid: str, evaluation: AnswerEvaluation) -> None:
     """
-    평가 결과를 저장한다. 답변 1건에 평가 1건이라 다시 돌리면 덮어쓴다.
-
-    실패한 평가는 여기까지 오지 않는다 — core.evaluation이 예외를 올리고,
-    호출자는 아무것도 저장하지 않는다(행이 없어야 미평가로 다시 잡힌다).
+    평가 결과를 저장. 재평가 시 덮어쓰기
+    평가 실패 시 저장 x
     """
     with get_cursor() as cur:
         cur.execute(
@@ -184,8 +175,7 @@ EVALUATION_COLUMNS = (
     "l.raw_query, l.cleaned_query, l.answer_type, l.conversation_id"
 )
 
-# 평가는 항상 로그 1건에 붙는다(FK + ON DELETE CASCADE). 로그 없는 평가는 존재할 수 없어
-# 질문 원문을 함께 주려고 INNER JOIN을 쓴다 — 점수만 있는 목록은 콘솔에서 쓸모가 없다.
+# 평가는 항상 로그 1건에 붙는다(FK + ON DELETE CASCADE)
 EVALUATION_FROM = "FROM answer_evaluations e JOIN qna_logs l ON l.qna_uuid = e.qna_uuid"
 
 
@@ -199,8 +189,7 @@ def _evaluation_filters(
 ) -> Tuple[str, list]:
     clauses, params = [], []
     if qna_uuids:
-        # 화면에 그린 메시지 여러 개의 평가를 한 번에 가져오는 경로.
-        # id마다 단건 API를 부르면 메시지 수만큼 요청이 나간다(N+1).
+        # 화면에 그린 메시지 여러 개의 평가를 한 번에 가져오는 경로
         clauses.append("e.qna_uuid = ANY(%s::uuid[])")
         params.append(list(qna_uuids))
     if conversation_id:
@@ -233,12 +222,9 @@ def list_evaluations(
     q: Optional[str] = None,
 ) -> Tuple[int, List[Dict[str, Any]]]:
     """
-    저장된 평가 전체 목록. 최근 것부터 준다 — 콘솔에서 먼저 보는 건 방금 들어온 답변이다.
+    저장된 평가 전체 목록 (최근 순)
 
-    qna_uuids를 주면 그 턴들의 평가만 한 번에 가져온다. 채점되지 않은 id는 결과에
-    그냥 없다 — 404가 아니라 "빠진 id = 미평가"로 읽으면 된다.
-
-    같은 시각에 들어온 행이 페이지 경계에서 흔들리지 않도록 qna_uuid까지 정렬에 넣는다.
+    qna_uuids 목록을 주면 그 턴들의 평가만 한 번에 가져온다.
     """
     where, params = _evaluation_filters(
         qna_uuids, conversation_id, verdict, issue, answer_type, q
