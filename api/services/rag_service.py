@@ -3,9 +3,10 @@ api/services/rag_service.py — 질의 → 검색 → 답변 오케스트레이�
 """
 
 import logging
+import threading
 import uuid
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from domain import (
     NO_SEARCH_ANSWER_TYPE, AnswerEvaluation, AnswerSection, ConversationTurn,
@@ -244,14 +245,32 @@ def run_evaluation(qna_uuid: str) -> AnswerEvaluation:
     return evaluation
 
 
+# 지금 백그라운드에서 채점 중인 턴. 같은 턴을 두 번 채점하지 않기 위한 것이다 —
+# 일괄 재실행 버튼을 두 번 누르면 그만큼 판정자 LLM 비용이 그대로 두 배가 된다.
+#
+# 프로세스 안에서만 유효한 자물쇠다. 워커를 여러 개 띄우면 워커별로 따로 잡히지만,
+# 그때도 결과는 덮어쓰기(upsert)라 망가지지 않는다 — 비용만 든다.
+_in_flight: Set[str] = set()
+_in_flight_lock = threading.Lock()
+
+
 def evaluate_and_store(qna_uuid: str) -> None:
     """
-    run_evaluation을 감싸 예외를 삼킨다. /ask 응답을 보낸 뒤 백그라운드로 도는 쪽이다.
+    run_evaluation을 감싸 예외를 삼킨다. /ask 응답을 보낸 뒤 백그라운드로 도는 쪽이고,
+    일괄 재실행도 이 함수를 턴 수만큼 예약한다.
 
     호출자가 없는 자리에서 도는 코드라 예외를 밖으로 내보내지 않는다. 실패하면
     아무것도 저장하지 않고 미평가로 남는다 — GET /qna?status=pending으로 다시 찾아
     재실행할 수 있다.
+
+    이미 같은 턴이 돌고 있으면 아무것도 하지 않는다.
     """
+    with _in_flight_lock:
+        if qna_uuid in _in_flight:
+            logger.info("이미 채점 중이라 건너뛴다: %s", qna_uuid)
+            return
+        _in_flight.add(qna_uuid)
+
     try:
         run_evaluation(qna_uuid)
     except QnaLogNotFound:
@@ -262,3 +281,6 @@ def evaluate_and_store(qna_uuid: str) -> None:
         logger.warning("답변 평가 실패 — 미평가로 남는다 %s: %s", qna_uuid, e)
     except Exception:
         logger.exception("답변 평가 중 오류 — 미평가로 남는다 %s", qna_uuid)
+    finally:
+        with _in_flight_lock:
+            _in_flight.discard(qna_uuid)

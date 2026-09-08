@@ -4,6 +4,7 @@ api/schemas/evaluations.py — answer_evaluations 조회 응답
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -63,3 +64,34 @@ class AnswerEvaluationOut(BaseModel):
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+
+# 한 번에 예약할 수 있는 채점 수. 한 건마다 판정자 LLM이 1회 도므로 상한이 곧 비용 상한이다.
+MAX_RUN_BATCH = 50
+
+
+class EvaluationRunRequest(BaseModel):
+    """
+    무엇을 채점할지. 둘 중 하나로 고른다.
+
+    - `qna_uuids`를 주면 그 턴들을 채점한다(이미 채점된 것도 다시 매긴다)
+    - 주지 않으면 **미평가에서 최근 `limit`건**을 가져다 채점한다
+    """
+    qna_uuids: Optional[List[UUID]] = Field(
+        default=None, max_length=MAX_RUN_BATCH,
+        description=f"채점할 턴. 최대 {MAX_RUN_BATCH}개. 생략하면 미평가에서 자동으로 고른다",
+    )
+    limit: int = Field(
+        default=20, ge=1, le=MAX_RUN_BATCH,
+        description="qna_uuids를 주지 않았을 때 미평가에서 가져올 건수",
+    )
+
+
+class EvaluationRunResponse(BaseModel):
+    """예약 결과. 채점 자체는 응답을 보낸 뒤에 돈다"""
+    queued: List[str] = Field(description="채점을 예약한 턴")
+    skipped: List[str] = Field(
+        default_factory=list, description="인사·잡담(no_search)이라 채점 대상이 아닌 턴"
+    )
+    not_found: List[str] = Field(default_factory=list, description="로그가 없는 턴")
+    hint: str = Field(description="진행 상황을 어떻게 보는지")

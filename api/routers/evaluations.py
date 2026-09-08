@@ -5,13 +5,15 @@ api/routers/evaluations.py — 답변 자동 평가(answer_evaluations) 조회
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 
 from api.deps import Pagination
 from api.repositories import qna_repository as repo
 from api.services import rag_service
 from api.schemas.common import Page
-from api.schemas.evaluations import AnswerEvaluationOut
+from api.schemas.evaluations import (
+    AnswerEvaluationOut, EvaluationRunRequest, EvaluationRunResponse,
+)
 from api.settings import Settings, get_settings
 from core.prompts import EVAL_ISSUE_CODES, EVAL_VERDICTS
 
@@ -92,6 +94,57 @@ def get_evaluation(qna_uuid: UUID) -> AnswerEvaluationOut:
             detail=f"평가를 찾을 수 없습니다(아직 채점되지 않았거나 채점에 실패했습니다): {qna_uuid}",
         )
     return AnswerEvaluationOut.from_row(row)
+
+
+@router.post(
+    "/run",
+    response_model=EvaluationRunResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="평가 일괄 실행 / 재실행",
+    description=(
+        "여러 턴을 한 번에 채점한다. **단건 API를 반복 호출하지 말 것** — 한 건마다 "
+        "판정자 LLM이 1회 돌아 수 초씩 걸리므로, 20건이면 요청도 20번에 응답도 수 분이다.\n\n"
+        "무엇을 채점할지는 둘 중 하나로 고른다.\n"
+        "- `qna_uuids` — 그 턴들을 채점한다. 이미 채점된 턴도 다시 매긴다(프롬프트를 고친 경우)\n"
+        "- 생략 — **미평가에서 최근 `limit`건**을 자동으로 고른다. 재실행 버튼 하나가 이것이다\n\n"
+        "**202로 먼저 답하고 채점은 그 뒤에 돈다.** 몇 분짜리 작업이라 응답 안에서 끝낼 수 없다. "
+        "진행 상황은 `GET /qna?status=pending`의 건수가 줄어드는 것으로 본다.\n\n"
+        "같은 턴이 이미 채점 중이면 그 예약은 조용히 버려진다 — 버튼을 두 번 눌러도 "
+        "판정자 비용이 두 배가 되지 않는다."
+    ),
+)
+def run_evaluations(
+    req: EvaluationRunRequest,
+    background: BackgroundTasks,
+) -> EvaluationRunResponse:
+    skipped: List[str] = []
+    not_found: List[str] = []
+
+    if req.qna_uuids:
+        ids = [str(u) for u in req.qna_uuids]
+        _, rows = repo.list_logs(len(ids), 0, qna_uuids=ids)
+        found = {str(r["qna_uuid"]): r["status"] for r in rows}
+
+        not_found = [i for i in ids if i not in found]
+        skipped = [i for i in ids if found.get(i) == "skipped"]
+        queued = [i for i in ids if i in found and found[i] != "skipped"]
+    else:
+        # 미평가만 고른다. skipped(인사·잡담)는 status 필터가 이미 걸러 낸다
+        _, rows = repo.list_logs(req.limit, 0, status="pending")
+        queued = [str(r["qna_uuid"]) for r in rows]
+
+    for qna_uuid in queued:
+        background.add_task(rag_service.evaluate_and_store, qna_uuid)
+
+    return EvaluationRunResponse(
+        queued=queued,
+        skipped=skipped,
+        not_found=not_found,
+        hint=(
+            "채점은 응답을 보낸 뒤에 돕니다. GET /api/v1/qna?status=pending 의 건수가 줄어드는 것으로 "
+            "진행을 확인하고, 결과는 GET /api/v1/evaluations 에서 봅니다."
+        ),
+    )
 
 
 @router.post(

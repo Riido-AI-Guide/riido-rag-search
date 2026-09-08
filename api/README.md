@@ -48,7 +48,8 @@ api/
 | GET | `/api/v1/evaluations` | **저장된 답변 평가 목록 — id 여러 개 한 번에 조회** |
 | GET | `/api/v1/evaluations/{qna_uuid}` | 평가 단건 |
 | GET | `/api/v1/qna` | **질의응답 로그 목록 — 미평가(`status=pending`) 조회** |
-| POST | `/api/v1/evaluations/{qna_uuid}` | **평가 실행 / 재실행** |
+| POST | `/api/v1/evaluations/run` | **평가 일괄 실행 / 재실행 (여러 건)** |
+| POST | `/api/v1/evaluations/{qna_uuid}` | 평가 실행 / 재실행 (1건, 결과를 기다린다) |
 | GET | `/api/v1/index-status` | **인덱스가 본문을 따라잡았는지 (재빌드 필요 여부)** |
 | GET | `/api/v1/health` | DB·인덱스 적재 상태 |
 
@@ -302,8 +303,9 @@ uuid 형식이 아니면 422다.
 미평가를 다시 돌리는 흐름은 이렇다.
 
 ```
-GET  /api/v1/qna?status=pending        # 재실행 대상 찾기
-POST /api/v1/evaluations/{qna_uuid}    # 한 건씩 채점 (판정자 LLM 1회)
+GET  /api/v1/qna?status=pending        # 재실행 대상 확인
+POST /api/v1/evaluations/run           # 미평가를 한 번에 채점 (202, 뒤에서 돈다)
+POST /api/v1/evaluations/{qna_uuid}    # 한 건만, 결과를 기다리며 채점
 ```
 
 ### POST /api/v1/evaluations/{qna_uuid}
@@ -326,9 +328,36 @@ POST /api/v1/evaluations/{qna_uuid}    # 한 건씩 채점 (판정자 LLM 1회)
 | 502 | 판정자가 실패했다. **아무것도 저장되지 않아 미평가로 남는다** — 다시 시도할 수 있다 |
 | 422 | uuid 형식이 아니다 |
 
-일괄 재실행은 없다. 수십 건이면 판정자 LLM도 수십 번 호출되어 응답 안에서 끝낼 수 없고,
-`BackgroundTasks`로 돌리며 진행 상황을 보여줄 방법이 따로 필요하다(→ "추가로 제안하는 API").
-지금은 `GET /qna?status=pending`의 목록을 클라이언트가 순회하며 건별로 부르면 된다.
+여러 건이면 이걸 반복 호출하지 말고 아래 일괄 실행을 쓴다.
+
+### POST /api/v1/evaluations/run
+
+여러 턴을 한 번에 채점한다. 한 건마다 판정자 LLM이 1회 돌아 수 초씩 걸리므로, 단건 API를
+20번 부르면 요청도 20번이고 응답도 수 분이다.
+
+| 바디 | 무엇을 채점하나 |
+|---|---|
+| `{"qna_uuids": ["...", "..."]}` | 그 턴들. **이미 채점된 턴도 다시 매긴다**(프롬프트를 고친 경우) |
+| `{"limit": 20}` 또는 `{}` | **미평가에서 최근 `limit`건.** 재실행 버튼 하나가 이것이다 |
+
+한 번에 50건까지다 — 그 상한이 곧 판정자 LLM 호출 수의 상한이다.
+
+```jsonc
+// 202 Accepted — 채점은 응답을 보낸 뒤에 돈다
+{
+  "queued":    ["3f2b9c14-…", "8a51-…"],   // 채점을 예약한 턴
+  "skipped":   ["6b0f5a1e-…"],             // 인사·잡담이라 채점 대상이 아님
+  "not_found": [],                          // 로그가 없는 턴
+  "hint": "채점은 응답을 보낸 뒤에 돕니다. GET /api/v1/qna?status=pending 의 건수가 …"
+}
+```
+
+**202로 먼저 답한다.** 몇 분짜리 작업이라 응답 안에서 끝낼 수 없다. 진행 상황은
+`GET /qna?status=pending`의 건수가 줄어드는 것으로 보고, 결과는 `GET /evaluations`에서 본다.
+
+**버튼을 두 번 눌러도 비용이 두 배가 되지 않는다.** 지금 채점 중인 턴은 예약이 조용히
+버려진다(`rag_service._in_flight`). 프로세스 안에서만 유효한 자물쇠라 워커를 여러 개 띄우면
+워커별로 따로 잡히지만, 결과는 덮어쓰기라 데이터가 망가지지는 않는다 — 비용만 든다.
 
 ### GET /api/v1/index-status
 
@@ -515,7 +544,7 @@ git diff data/rag_view_sentences.json     # 콘솔에서 손댄 것만 뜬다
 
 | 제안 | 이유 |
 |---|---|
-| `POST /evaluations/run-pending` — 미평가 일괄 재실행 | 지금은 `POST /evaluations/{qna_uuid}`를 건별로 부른다. 수십 건을 한 번에 돌리려면 판정자 LLM이 그만큼 호출되므로 `BackgroundTasks`로 202를 먼저 주고 진행 상황은 `GET /qna?status=pending`이 줄어드는 것으로 보는 형태가 필요하다 |
+| 채점 작업 상태 조회 | `POST /evaluations/run`은 202만 주고 끝난다. 지금 몇 건이 돌고 있고 무엇이 실패했는지는 `GET /qna?status=pending`이 줄어드는 것으로 간접 확인한다. 작업 이력을 남기려면 테이블이 필요하다 |
 | 관리자 인증 | 이 서버의 조회·재실행 API는 사용자 질문 원문을 그대로 노출하고 재실행은 LLM 비용을 쓴다. 운영 콘솔이 백엔드를 거치지 않고 직접 붙는 구조라 인증이 이 서버에 있어야 한다 |
 | `POST /admin/reindex` — 인덱스 재빌드 트리거 | 지금은 `GET /index-status`로 낡은 것을 확인하고 서버에서 스크립트를 돌려야 한다. 수 분 걸리는 작업이라 202를 먼저 주고(`BackgroundTasks`) 진행 상황은 `index-status`가 줄어드는 것으로 보는 형태가 맞다. 동시 실행 방지(`pg_advisory_lock`)가 필요하다 — 두 번 누르면 임베딩 비용이 두 배로 나간다 |
 | `GET /ask/stream` — 답변 토큰 스트리밍 | `/ask`는 LLM 2~3회 + 임베딩 1회라 체감 지연이 크다. SSE로 답변을 흘려보내면 개선된다. `core/generation.py`가 `stream=True`를 지원하도록 바뀌어야 한다 |
