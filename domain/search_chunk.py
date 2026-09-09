@@ -1,6 +1,12 @@
 from dataclasses import dataclass, field
 from typing import List
 
+# 검색 문장의 유형. 늘리려면 여기에 추가한다 — API 검증과 프롬프트가 이 목록을 본다.
+#   hypo_q     : 이 문서로 답할 수 있는 가설 질문 (문서당 여러 개가 정상)
+#   real_q     : 사용자가 실제로 칠 법한 질문
+#   contextual : 이 문서가 무엇을 다루는지 요약한 문장
+VIEW_TYPES = ("hypo_q", "real_q", "contextual")
+
 
 @dataclass
 class SearchChunk:

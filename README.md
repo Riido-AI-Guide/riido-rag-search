@@ -27,6 +27,7 @@ pip install -r requirements.txt
 
 python -m scripts.build_answer_units        # answer_units 적재 (먼저)
 python -m scripts.build_search_units        # search_units 적재
+python -m scripts.build_qna_logs            # 질의응답 로그·평가 테이블 (인덱스와 무관, 순서 상관없음)
 
 uvicorn api.main:app --reload               # 저장소 루트에서
 ```
@@ -36,6 +37,38 @@ uvicorn api.main:app --reload               # 저장소 루트에서
 빈 값만 채운다. 본문 해시가 그대로면 재임베딩하지 않으므로(`유지` / `링크만 갱신`으로
 집계된다) 이미 만들어 둔 벡터는 그대로 남는다.
 
+### 가이드가 갱신되면
+
+**`build_answer_units`만 돌리면 절반만 반영된다.** 답변 본문과 링크는 최신이 되지만
+검색 인덱스는 그대로라, 답변은 새 문서인데 **검색은 옛 문서 기준**으로 남는다. 두 스크립트를
+순서대로 돌려야 한다.
+
+```bash
+python -m scripts.build_answer_units    # 본문 갱신. 끝에 "검색 인덱스 재생성 필요"가 뜬다
+python -m scripts.build_search_units    # 그 문서들의 검색 인덱스를 다시 만든다
+```
+
+낡음의 기준은 `answer_content_vectors.source_hash`다 — 그 인덱스가 어느 본문을 색인한
+것인지 행에 적어 두고 `answer_units.source_hash`와 비교해서, 본문이 바뀐 문서만 다시
+임베딩한다. 삭제된 문서는 FK CASCADE로 인덱스에서 함께 사라진다.
+
+**새로 생긴 섹션의 검색 문장은 자동으로 만들어지지 않는다.** `search_units`의 출처인
+[data/rag_view_sentences.json](data/rag_view_sentences.json)이 외부에서 만들어 커밋한
+파일이라 재생성 경로가 없어서다. 그런 문서는 원문 키워드 검색으로만 걸리는 반쪽 문서가 된다.
+사람이 채워 넣고 고치는 경로는 API로 열려 있다(→ [api/README.md](api/README.md)의 "검색 문장 관리").
+등록한 문장은 `search_units.source='console'`로 남아 다음 빌드의 정리 대상에서 빠지고,
+작업이 끝나면 파일로 되돌려 커밋한다.
+
+```bash
+curl -s localhost:8000/api/v1/search-units/export -o data/rag_view_sentences.json
+```
+
+무엇이 낡았는지는 서버가 알려준다.
+
+```bash
+curl localhost:8000/api/v1/index-status
+```
+
 ### 근거 링크
 
 답변 단위마다 원문 주소(`answer_units.source_url`)를 들고 있고, `/ask` 응답의
@@ -43,6 +76,28 @@ uvicorn api.main:app --reload               # 저장소 루트에서
 받아온다** — llms.txt의 나열 순서로 페이지를 짝짓고(제목으로 짝지으면 안 된다. '자동화'와
 'MCP 서버'가 각각 두 번 나온다), 섹션 앵커는 렌더된 페이지에서 실제 id를 읽는다.
 이유와 함정은 [scripts/doc_links.py](scripts/doc_links.py)에 적어 두었다.
+
+### 답변 평가
+
+`/ask`는 답변을 보낸 뒤 그 답변을 자동으로 채점해 DB에 남긴다. 채점은 **응답을 보낸 다음에**
+돌기 때문에(`BackgroundTasks`) 응답 시간에는 영향이 없다. 테이블은
+`python -m scripts.build_qna_logs`가 만든다.
+
+| 테이블 | 내용 |
+|---|---|
+| `qna_logs` | 채점에 넣는 입력 — 질문 원문·정제된 질문·답변 평문·검색된 문서 id. `qna_uuid`가 PK |
+| `answer_evaluations` | 채점 결과 — 충실도·답변 관련성·문서 관련성, `verdict`(pass/fail), `issues`, 사유. 답변 1건에 1행 |
+
+`qna_uuid`는 `/ask`가 발급해 응답에 실어 보낸다. 백엔드가 발급하는 메시지 id와는 **다른 값이다** —
+이 값은 답변을 만들 때 생기고, 메시지 id는 답변을 저장한 뒤에 생긴다.
+
+**채점에 실패하면 아무것도 저장하지 않는다.** 실패한 행을 남기면 "아직 평가 안 함"과 구분되지
+않기 때문이다. 행이 없어야 미평가로 다시 잡혀 나중에 재실행할 수 있다.
+
+판정 프롬프트와 문제 유형 코드는 [core/prompts.py](core/prompts.py)에 있다. 코드는 사용자가
+bad를 고를 때 쓰는 항목과 어휘를 맞췄지만 정의역이 다르다 — "오래된 정보"는 판정자가 낼 수 없고
+(검색된 문서만 보므로 문서 자체가 낡았으면 오히려 충실도가 1.0이 된다), 반대로 `retrieval_miss`
+(문서가 질문과 무관하다)는 근거 문서를 보지 않는 사용자가 낼 수 없다.
 
 ### 설정
 
@@ -76,27 +131,21 @@ python -m scripts.evaluate_search            # Hit@1 / Hit@3 / MRR 채점
   `TSVECTOR`가 아니라 Kiwi가 뽑은 키워드 문자열을 담는다(실제 `to_tsvector()`는 SQL에서 실행).
   `text_keywords`가 맞다. [scripts/build_search_units.py](scripts/build_search_units.py)의 대입부도
   함께 고쳐야 한다.
-- **`QnA` 저장 기능** — [domain/qna.py](domain/qna.py)는 질문·답변 로그를 DB에 남기려고 만들었지만
-  아직 아무 데서도 쓰지 않는다. 설계 방향은 정해졌다:
-
-  - 평가 점수가 낮으면 답변을 다시 생성하므로, **질문 1개에 답변 시도 N개**가 달린다.
-  - 근거 문서는 시도마다 달라지므로 `QnA`가 아니라 **각 시도**가 들고 있어야 한다.
-    (현재 `QnA.documents`에 있는 건 잘못된 위치)
-  - 따라서 `AnswerAttempt(검색어, 문서, 답변, 평가)`를 만들고 `QnA`는
-    `query` + `attempts: List[AnswerAttempt]` + `is_good` + `final_attempt`를 갖는다.
-  - `Answer.evaluation`은 이때 `AnswerAttempt.evaluation`으로 옮긴다
-    (`generate_rag_answer()`가 평가를 만들 수 없으므로 `Answer`에 두면 항상 `None`).
-  - 재시도가 **무엇을 바꾸는지**(검색어 변형 / top_k / temperature) 먼저 정해야
-    로그 스키마의 컬럼이 의미를 갖는다.
-  - 로그의 `doc_id`에는 FK를 걸지 않는다. [scripts/build_answer_units.py](scripts/build_answer_units.py)가
-    사라진 문서를 지울 때 과거 로그까지 CASCADE로 삭제된다.
+- **운영 콘솔 API** — 품질 로그 조회(`GET /qna`)와 평가 재실행(`POST /evaluations`)이 아직 없다.
+  자동 채점을 놓쳤거나 판정 프롬프트를 고쳐 다시 돌릴 때 필요하다. 콘솔이 백엔드를 거치지 않고
+  이 서버에 직접 붙을 예정이라 관리자 인증도 함께 있어야 한다.
+- **답변 재생성** — 채점이 답변을 보낸 뒤에 돌기 때문에 점수가 낮아도 그 자리에서 다시 만들 수 없다.
+  지금은 질문 1 : 답변 1 : 평가 1이다. 재생성을 도입하려면 재시도가 **무엇을 바꾸는지**
+  (검색어 변형 / top_k / temperature) 먼저 정해야 로그에 붙일 컬럼이 의미를 갖는다.
 - **import 시점 부수효과** — [core/search.py](core/search.py)가 모듈 로드 때 `Kiwi()`와
   `OpenAIEmbeddings()`를 만든다. 그래서 부팅 때 `warmup()`이 필요하고, 이 모듈을 import하는
   테스트는 무조건 수 초를 기다린다. 지연 생성으로 바꾸면 `warmup()` 본문이 실제 준비를 맡는다.
 - **`search_queries` 활용** — [core/query_transform.py](core/query_transform.py)가 변형 검색어를 2~3개
   만들지만 검색에는 `cleaned_query` 하나만 쓴다. 멀티쿼리 검색 도입 여부 미정.
-- **`rag_view_sentences.json` 생성 스크립트** — 외부에서 만들어 커밋한 파일이라
-  저장소에 재생성 경로가 없다. ([data/rag_view_sentences.json](data/rag_view_sentences.json))
+- **`rag_view_sentences.json` 일괄 생성** — 문서 하나씩 초안을 만드는 경로
+  (`POST /api/v1/search-units/draft`)와 파일로 되돌리는 경로(`GET .../export`)는 있지만,
+  파일 전체를 처음부터 다시 만드는 스크립트는 없다. 179개 문서를 한 번에 돌리려면 그쪽이
+  필요하다. ([data/rag_view_sentences.json](data/rag_view_sentences.json))
 - **테스트 부재** — [test_rag.py](test_rag.py)는 이름과 달리 pytest 테스트가 아니라 눈으로 확인하는
   수동 스모크 스크립트다. `rag_service.ask()`의 분기(첫 턴/후속 턴, `needs_search`)는 LLM을
   스텁으로 갈아끼우면 값싸게 테스트할 수 있다.

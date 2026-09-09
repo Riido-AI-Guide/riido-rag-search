@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # 멀티턴 — 질문 재작성에 실제로 쓸 이전 턴(히스토리) 수.
     history_turns: int = 5
 
+    # 답변을 보낸 뒤 그 답변을 자동으로 채점할지. 끄면 로그만 남음
+    evaluate_on_ask: bool = True
+
     # 검색 기본값
     default_top_k: int = 5
     default_vector_weight: float = 0.5

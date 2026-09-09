@@ -2,7 +2,7 @@
 api/routers/chat.py — 질의응답 엔드포인트
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 
 from api.settings import Settings, get_settings
 from api.schemas.chat import AnswerSectionOut, AskRequest, AskResponse
@@ -23,10 +23,17 @@ router = APIRouter(tags=["chat"])
         "이전 대화를 history로 함께 보내면 후속 질문의 대명사·생략을 앞 턴에서 풀어 검색한다. "
         "첫 대화면 history와 conversation_id를 생략하면 되고, 그때는 단일턴과 동일하게 동작한다.\n\n"
         "title은 매 턴 온다. 첫 턴이면 대화 제목으로 저장하고, 후속 턴이면 말풍선 제목으로만 "
-        "쓴다 — 후속 턴의 title로 대화 제목을 덮어쓰지 말 것."
+        "쓴다 — 후속 턴의 title로 대화 제목을 덮어쓰지 말 것.\n\n"
+        "qna_uuid는 이 턴에 붙는 식별자다. 답변을 보낸 뒤 서버가 이 답변을 자동으로 채점하는데, "
+        "그 결과가 이 값에 달린다. 저장해 두면 나중에 사용자 good/bad와 대조하거나 대화 삭제 시 "
+        "함께 정리할 수 있다."
     ),
 )
-def ask(req: AskRequest, settings: Settings = Depends(get_settings)) -> AskResponse:
+def ask(
+    req: AskRequest,
+    background: BackgroundTasks,
+    settings: Settings = Depends(get_settings),
+) -> AskResponse:
     # LlmError는 api/main.py의 예외 핸들러가 502로 변환한다
     result = rag_service.ask(
         query=req.query,
@@ -37,7 +44,13 @@ def ask(req: AskRequest, settings: Settings = Depends(get_settings)) -> AskRespo
         max_history_turns=settings.history_turns,
     )
 
+    # 답변을 먼저 보낸 후 평가 실행
+    # 프로세스가 죽어 놓치더라도 미평가로 남아 운영 콘솔에서 다시 돌릴 수 있다
+    if settings.evaluate_on_ask and result.needs_search:
+        background.add_task(rag_service.evaluate_and_store, result.qna_uuid)
+
     return AskResponse(
+        qna_uuid=result.qna_uuid,
         raw_query=result.raw_query,
         cleaned_query=result.cleaned_query,
         needs_search=result.needs_search,

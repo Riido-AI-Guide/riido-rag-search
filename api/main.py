@@ -16,7 +16,10 @@ from fastapi.responses import JSONResponse
 
 from api.settings import get_settings
 from core.db import close_pool, init_pool
-from api.routers import answer_units, chat, health, search_units
+from api.routers import (
+    answer_units, chat, evaluations, feedback, health, index_status, qna, search_units,
+)
+from core.evaluation import EvaluationError
 from core.generation import LlmError
 
 logger = logging.getLogger("api")
@@ -56,12 +59,17 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    for router in (health.router, chat.router, answer_units.router, search_units.router):
+    for router in (
+        health.router, chat.router, answer_units.router,
+        search_units.router, evaluations.router, qna.router, index_status.router,
+        feedback.router,
+    ):
         app.include_router(router, prefix=settings.api_prefix)
 
     @app.exception_handler(psycopg2.errors.UndefinedTable)
-    async def undefined_table_handler(request: Request, exc: psycopg2.errors.UndefinedTable):
-        """인덱스가 아직 없을 때"""
+    @app.exception_handler(psycopg2.errors.UndefinedColumn)
+    async def undefined_table_handler(request: Request, exc: psycopg2.Error):
+        """인덱스가 아직 없거나, 스키마가 코드보다 오래됐을 때(빌드 스크립트가 스키마를 맞춘다)"""
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={
@@ -77,6 +85,21 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY,
             content={"detail": str(exc), "hint": "잠시 후 다시 시도해 주세요."},
+        )
+
+    @app.exception_handler(EvaluationError)
+    async def evaluation_error_handler(request: Request, exc: EvaluationError):
+        """
+        채점 실패. /ask 뒤 백그라운드로 도는 평가는 여기 오지 않는다(그쪽은 예외를 삼키고
+        미평가로 남긴다) — 결과를 기다리는 재실행 API만 이 경로를 탄다.
+        """
+        logger.warning("평가 재실행 실패: %s", exc)
+        return JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            content={
+                "detail": f"판정자가 평가에 실패했습니다: {exc}",
+                "hint": "아무것도 저장되지 않아 미평가로 남습니다. 잠시 후 다시 시도해 주세요.",
+            },
         )
 
     @app.exception_handler(psycopg2.OperationalError)
