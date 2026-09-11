@@ -7,7 +7,7 @@ on:
   workflow_dispatch:          # Actions 탭에서 수동 실행
 
 env:
-  APP_NAME: rag-ai
+  APP_NAME: rag-ai-v2
   RESOURCE_GROUP: rag-rg
 
 jobs:
