@@ -1,0 +1,36 @@
+# 비밀 — 이미지에 절대 들어가면 안 된다. 값은 ACA secret/환경변수로 넣는다
+.env
+.env.*
+
+# 로컬 파이썬 환경
+venv/
+.venv/
+.riido/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# 저장소·에디터
+.git/
+.gitignore
+.github/
+.vscode/
+.idea/
+.claude/
+.DS_Store
+**/.DS_Store
+
+# 실행에 필요 없는 것
+**/*.md
+test_rag.py
+Dockerfile
+.dockerignore
+
+# 평가 캐시·재생성 가능한 산출물 (.gitignore와 같은 목록)
+chroma_db/
+golden_labels_draft.json
+eval_transform_cache.json
+eval_results.csv
+_to_delete/
