@@ -20,6 +20,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Buildx 준비
+        uses: docker/setup-buildx-action@v3
+        
       # GitHub이 자동으로 주는 GITHUB_TOKEN으로 로그인합니다. 따로 만들 게 없습니다.
       - name: ghcr 로그인
         uses: docker/login-action@v3
