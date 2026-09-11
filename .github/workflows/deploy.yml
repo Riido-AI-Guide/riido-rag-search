@@ -1,0 +1,59 @@
+name: deploy
+
+# 레포가 하나의 서비스만 담고 있으니 paths 필터 없이 main 푸시마다 배포합니다.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:          # Actions 탭에서 수동 실행
+
+env:
+  APP_NAME: rag-ai
+  RESOURCE_GROUP: rag-rg
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write         # ghcr.io에 이미지를 올리려면 필요합니다
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # GitHub이 자동으로 주는 GITHUB_TOKEN으로 로그인합니다. 따로 만들 게 없습니다.
+      - name: ghcr 로그인
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ghcr.io는 이미지 이름에 대문자를 허용하지 않습니다.
+      # github.repository 는 "소유자/레포이름" 이라 그대로 이미지 경로가 됩니다.
+      - name: 이미지 이름 소문자로
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
+      - name: 빌드 & 푸시
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Azure 로그인
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # 커밋 해시를 태그로 쓰는 이유:
+      # latest만 쓰면 Container Apps가 "이미지 주소가 그대로네" 하고 새 버전을 안 받아옵니다.
+      - name: Container Apps에 배포
+        run: |
+          az containerapp update \
+            --name ${{ env.APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.IMAGE }}:${{ github.sha }}
