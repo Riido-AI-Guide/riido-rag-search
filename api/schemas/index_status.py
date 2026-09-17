@@ -44,8 +44,13 @@ class IndexStatus(BaseModel):
 
     hint: Optional[str] = Field(default=None, description="무엇을 실행하면 되는지")
 
+    rebuilding: bool = Field(
+        default=False,
+        description="지금 재빌드가 도는 중인지. 콘솔이 이 값이 false가 될 때까지 폴링한다",
+    )
+
     @classmethod
-    def from_row(cls, row: Dict[str, Any]) -> "IndexStatus":
+    def from_row(cls, row: Dict[str, Any], rebuilding: bool = False) -> "IndexStatus":
         no_search = StaleGroup.from_pair(row["no_search_units"])
         no_vector = StaleGroup.from_pair(row["no_content_vector"])
         outdated = StaleGroup.from_pair(row["outdated_content_vector"])
@@ -69,4 +74,5 @@ class IndexStatus(BaseModel):
             no_content_vector=no_vector,
             outdated_content_vector=outdated,
             hint=" ".join(hints) or None,
+            rebuilding=rebuilding,
         )
