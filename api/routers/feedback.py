@@ -6,6 +6,7 @@ api/routers/feedback.py — 사용자 피드백(좋아요/싫어요) × 자동 �
 """
 
 from typing import List, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -80,9 +81,9 @@ def stats() -> List[AgreementStat]:
         "피드백이 없는 턴이면 404다 — 채점 결과만 보려면 `GET /evaluations/{qna_uuid}`를 쓴다."
     ),
 )
-def get_feedback(qna_uuid: str) -> FeedbackDetail:
+def get_feedback(qna_uuid: UUID) -> FeedbackDetail:
     try:
-        row = repo.get_feedback(qna_uuid)
+        row = repo.get_feedback(str(qna_uuid))
     except repo.BackendSchemaMissing:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=SCHEMA_MISSING_DETAIL)
 

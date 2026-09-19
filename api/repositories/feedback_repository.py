@@ -16,13 +16,12 @@ class BackendSchemaMissing(Exception):
     """이 DB에 백엔드 스키마(app)가 없다. 백엔드를 함께 띄우지 않은 개발 환경이다."""
 
 
-# qna_uuid를 문자열로 맞춰 조인. 백엔드는 varchar, 이쪽은 uuid라 타입이 다르고,
-# f.qna_uuid::uuid로 캐스팅하면 값이 uuid 형식이 아닌 행 하나에 쿼리 전체가 죽는다.
-# (행 수가 적어 인덱스를 못 타는 비용은 무시할 만하다. 백엔드가 uuid로 바꾸면 정리된다)
+# 백엔드도 qna_uuid를 uuid로 저장하므로 캐스팅 없이 그대로 조인한다.
+# (qna_logs·answer_evaluations의 PK 인덱스를 그대로 탄다)
 FEEDBACK_FROM = f"""
     FROM {FEEDBACK_TABLE} f
-    LEFT JOIN qna_logs l           ON l.qna_uuid::text = f.qna_uuid
-    LEFT JOIN answer_evaluations e ON e.qna_uuid::text = f.qna_uuid
+    LEFT JOIN qna_logs l           ON l.qna_uuid = f.qna_uuid
+    LEFT JOIN answer_evaluations e ON e.qna_uuid = f.qna_uuid
 """
 
 # 사용자 평가와 판정자 평가가 같은 방향인지 대조
